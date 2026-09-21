@@ -185,6 +185,34 @@ app.post('/api/payment/create-order', async (req, res) => {
   }
 });
 
+function calculatePlanDetails(planId) {
+  const normalized = (planId || 'quarterly').toLowerCase();
+  const now = Date.now();
+  if (normalized === 'monthly') {
+    return {
+      planId: 'monthly',
+      planName: 'Monthly Pass',
+      expiresAt: new Date(now + 30 * 24 * 3600 * 1000).toISOString(),
+      licenseKey: `EL-MONTHLY-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    };
+  } else if (normalized === 'lifetime') {
+    return {
+      planId: 'lifetime',
+      planName: 'Lifetime Pro',
+      expiresAt: null, // Permanent
+      licenseKey: `EL-LIFETIME-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    };
+  } else {
+    // quarterly / 3-month (default)
+    return {
+      planId: 'quarterly',
+      planName: '3-Month Pass',
+      expiresAt: new Date(now + 90 * 24 * 3600 * 1000).toISOString(),
+      licenseKey: `EL-3MONTH-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    };
+  }
+}
+
 // 5. Verify Razorpay Payment Signature and Auto-Activate
 app.post('/api/payment/verify', async (req, res) => {
   try {
@@ -199,21 +227,31 @@ app.post('/api/payment/verify', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid payment signature' });
     }
 
+    const planDetails = calculatePlanDetails(planId);
+
     if (hwid) {
       const docRef = db.collection(collectionName).doc(hwid);
       await docRef.set({
         status: 'approved',
-        planId: planId || 'pro',
+        planId: planDetails.planId,
+        planName: planDetails.planName,
+        licenseKey: planDetails.licenseKey,
+        expiresAt: planDetails.expiresAt,
         paymentId: razorpay_payment_id,
         orderId: razorpay_order_id,
         paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      console.log(`[License Approved] HWID ${hwid} approved via verified checkout ${razorpay_payment_id}`);
+      console.log(`[License Approved] HWID ${hwid} assigned ${planDetails.planName} (Key: ${planDetails.licenseKey})`);
     }
 
-    res.json({ success: true, status: 'approved' });
+    res.json({
+      success: true,
+      status: 'approved',
+      ...planDetails
+    });
   } catch (err) {
     console.error('[Verify Payment Error]', err);
     res.status(500).json({ error: err.message });
@@ -246,19 +284,25 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
       const payment = payload.payment ? payload.payment.entity : null;
       const notes = payment?.notes || {};
       const hwid = notes.hwid || notes.HWID;
+      const planId = notes.plan || notes.planId || 'quarterly';
 
       if (hwid) {
+        const planDetails = calculatePlanDetails(planId);
         const docRef = db.collection(collectionName).doc(hwid);
         await docRef.set({
           status: 'approved',
-          planId: notes.plan || 'pro',
+          planId: planDetails.planId,
+          planName: planDetails.planName,
+          licenseKey: planDetails.licenseKey,
+          expiresAt: planDetails.expiresAt,
           amount: payment.amount ? payment.amount / 100 : 49,
           paymentId: payment.id,
           paidAt: admin.firestore.FieldValue.serverTimestamp(),
+          approvedAt: admin.firestore.FieldValue.serverTimestamp(),
           lastUpdated: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
-        console.log(`[License Approved] HWID ${hwid} approved via Razorpay payment ${payment.id}`);
+        console.log(`[License Approved via Webhook] HWID ${hwid} assigned ${planDetails.planName} (Key: ${planDetails.licenseKey})`);
       }
     }
 
@@ -269,7 +313,131 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
   }
 });
 
+// 7. Admin Analytics & Device Counts Endpoint
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const snap = await db.collection(collectionName).get();
+    const now = Date.now();
+    const fifteenMinMs = 15 * 60 * 1000;
+    const oneDayMs = 24 * 3600 * 1000;
+
+    let total = 0;
+    let onlineNow = 0;
+    let activeToday = 0;
+    const breakdown = { approved: 0, trial: 0, expired: 0, rejected: 0, revoked: 0 };
+    const plans = { lifetime: 0, quarterly: 0, monthly: 0, trial: 0 };
+
+    snap.forEach(doc => {
+      total++;
+      const data = doc.data();
+      const lastActiveMs = data.lastActiveAt ? (data.lastActiveAt.toMillis ? data.lastActiveAt.toMillis() : new Date(data.lastActiveAt).getTime()) : 0;
+
+      if (lastActiveMs > 0 && (now - lastActiveMs < fifteenMinMs)) onlineNow++;
+      if (lastActiveMs > 0 && (now - lastActiveMs < oneDayMs)) activeToday++;
+
+      const status = data.status || 'trial';
+      breakdown[status] = (breakdown[status] || 0) + 1;
+
+      const planId = data.planId || (status === 'approved' ? 'lifetime' : 'trial');
+      plans[planId] = (plans[planId] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      total,
+      onlineNow,
+      activeToday,
+      breakdown,
+      plans,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[Admin Stats Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. Device Listing Endpoint for Admin Dashboard
+app.get('/api/devices', async (req, res) => {
+  try {
+    const snap = await db.collection(collectionName).get();
+    const list = [];
+    snap.forEach(doc => {
+      const data = doc.data();
+      list.push({
+        id: doc.id,
+        hwid: doc.id,
+        ...data,
+        registeredAt: data.registeredAt?.toDate ? data.registeredAt.toDate().toISOString() : data.registeredAt,
+        lastActiveAt: data.lastActiveAt?.toDate ? data.lastActiveAt.toDate().toISOString() : data.lastActiveAt,
+        approvedAt: data.approvedAt?.toDate ? data.approvedAt.toDate().toISOString() : data.approvedAt
+      });
+    });
+    res.json({ success: true, count: list.length, devices: list });
+  } catch (err) {
+    console.error('[Get Devices Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. Over-The-Air (OTA) Updates Manifest & Publish Endpoints
+let currentRelease = {
+  version: '1.0.4',
+  releaseDate: '2026-09-21T18:00:00.000Z',
+  notes: '✨ Dynamic optical continuous squircle geometry, live Razorpay checkout, and real-time cloud license sync.',
+  downloadUrl: 'https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v1.0.4/Edge.Light.Setup.1.0.4.exe',
+  setupUrl: 'https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v1.0.4/Edge.Light.Setup.1.0.4.exe'
+};
+
+app.get('/api/updates/latest', async (req, res) => {
+  try {
+    const relDoc = await db.collection('system').doc('latest_release').get();
+    if (relDoc.exists) {
+      const data = relDoc.data();
+      return res.json({
+        success: true,
+        version: data.version,
+        releaseDate: data.releaseDate,
+        notes: data.notes,
+        downloadUrl: data.downloadUrl || data.setupUrl,
+        setupUrl: data.setupUrl || data.downloadUrl
+      });
+    }
+  } catch (e) {}
+  res.json({
+    success: true,
+    ...currentRelease
+  });
+});
+
+app.post('/api/updates/publish', async (req, res) => {
+  try {
+    const { version, notes, downloadUrl, setupUrl } = req.body;
+    if (!version) return res.status(400).json({ error: 'Missing version' });
+
+    const cleanVer = version.replace(/^v/i, '').trim();
+    const newRelease = {
+      version: cleanVer,
+      releaseDate: new Date().toISOString(),
+      notes: notes || '✨ Performance refinements, optical glow tuning, and stability improvements.',
+      downloadUrl: downloadUrl || `https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v${cleanVer}/Edge.Light.Setup.${cleanVer}.exe`,
+      setupUrl: setupUrl || downloadUrl || `https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v${cleanVer}/Edge.Light.Setup.${cleanVer}.exe`,
+      publishedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    currentRelease = { ...newRelease };
+    await db.collection('system').doc('latest_release').set(newRelease, { merge: true });
+
+    console.log(`[OTA Update Published] Version ${cleanVer} published.`);
+    res.json({ success: true, release: newRelease });
+  } catch (err) {
+    console.error('[Publish Update Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`⚡ Edge Light Backend server running on port ${PORT}`);
   console.log(`📊 Admin Console available at: http://localhost:${PORT}/admin`);
 });
+

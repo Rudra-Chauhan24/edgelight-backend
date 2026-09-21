@@ -3,20 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Edge Light — License & Device Admin Console</title>
+  <title>Edge Light — Live User Analytics & Admin Console</title>
   <style>
     :root {
-      --bg: #0d0f14;
-      --card-bg: rgba(22, 26, 35, 0.75);
+      --bg: #0b0d13;
+      --card-bg: rgba(20, 24, 34, 0.85);
       --card-border: rgba(255, 255, 255, 0.08);
       --text: #f3f4f6;
       --text-muted: #9ca3af;
       --accent: #ff9800;
-      --accent-glow: rgba(255, 152, 0, 0.18);
+      --accent-glow: rgba(255, 152, 0, 0.22);
       --success: #10b981;
       --danger: #ef4444;
       --warning: #f59e0b;
       --info: #3b82f6;
+      --purple: #8b5cf6;
     }
 
     * {
@@ -27,7 +28,7 @@
     }
 
     body {
-      background: radial-gradient(circle at top right, #1a1e29 0%, #0d0f14 100%);
+      background: radial-gradient(circle at top right, #181d2a 0%, #0b0d13 100%);
       color: var(--text);
       min-height: 100vh;
       padding: 30px 40px;
@@ -38,9 +39,11 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 32px;
+      margin-bottom: 28px;
       padding-bottom: 20px;
       border-bottom: 1px solid var(--card-border);
+      flex-wrap: wrap;
+      gap: 16px;
     }
 
     .brand {
@@ -50,15 +53,15 @@
     }
 
     .brand-logo {
-      width: 42px;
-      height: 42px;
+      width: 44px;
+      height: 44px;
       background: linear-gradient(135deg, #ffb366, #ff7700);
       border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 22px;
-      box-shadow: 0 4px 20px var(--accent-glow);
+      font-size: 24px;
+      box-shadow: 0 4px 22px var(--accent-glow);
     }
 
     .brand h1 {
@@ -111,12 +114,38 @@
       background: rgba(255, 255, 255, 0.12);
     }
 
+    /* Live Sync Indicator Pill */
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: #34d399;
+      font-size: 12px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse-dot 1.8s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
     /* Stats Grid */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      gap: 18px;
-      margin-bottom: 32px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
     }
 
     .stat-card {
@@ -124,11 +153,17 @@
       border: 1px solid var(--card-border);
       border-radius: 14px;
       padding: 20px;
-      backdrop-filter: blur(12px);
+      backdrop-filter: blur(14px);
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card.hero {
+      background: linear-gradient(135deg, rgba(255, 152, 0, 0.12), rgba(20, 24, 34, 0.9));
+      border-color: rgba(255, 152, 0, 0.35);
     }
 
     .stat-title {
-      font-size: 13px;
+      font-size: 12.5px;
       color: var(--text-muted);
       font-weight: 500;
       display: flex;
@@ -144,7 +179,7 @@
     }
 
     .stat-desc {
-      font-size: 12px;
+      font-size: 11.5px;
       color: var(--text-muted);
       margin-top: 6px;
     }
@@ -155,20 +190,20 @@
       border: 1px solid var(--card-border);
       border-radius: 16px;
       padding: 24px;
-      backdrop-filter: blur(12px);
+      backdrop-filter: blur(14px);
     }
 
     .table-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
       flex-wrap: wrap;
       gap: 16px;
     }
 
     .search-box {
-      background: rgba(0, 0, 0, 0.25);
+      background: rgba(0, 0, 0, 0.35);
       border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 8px 14px;
@@ -178,6 +213,34 @@
       outline: none;
     }
     .search-box:focus {
+      border-color: var(--accent);
+    }
+
+    /* Filter Chips */
+    .filter-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .filter-tab {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-tab:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+    .filter-tab.active {
+      background: var(--accent);
+      color: #000;
       border-color: var(--accent);
     }
 
@@ -231,6 +294,10 @@
     }
 
     /* Table */
+    .table-scroll {
+      overflow-x: auto;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -246,6 +313,7 @@
       text-transform: uppercase;
       font-size: 11px;
       letter-spacing: 0.05em;
+      white-space: nowrap;
     }
 
     td {
@@ -258,113 +326,196 @@
       background: rgba(255, 255, 255, 0.02);
     }
 
-    .hwid-badge {
-      font-family: 'Consolas', monospace;
-      font-weight: 700;
-      background: rgba(0, 0, 0, 0.35);
-      padding: 4px 8px;
-      border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: #ffd8a8;
-      letter-spacing: 0.05em;
-    }
-
+    /* Badges */
     .status-pill {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       padding: 4px 10px;
-      border-radius: 999px;
+      border-radius: 12px;
       font-size: 11.5px;
       font-weight: 600;
+      white-space: nowrap;
     }
-    .status-approved { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .status-trial { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
-    .status-expired { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
-    .status-rejected { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .status-approved {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-trial {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .status-expired {
+      background: rgba(156, 163, 175, 0.15);
+      color: #9ca3af;
+      border: 1px solid rgba(156, 163, 175, 0.3);
+    }
+    .status-rejected, .status-revoked {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
 
+    .plan-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.15);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .plan-lifetime {
+      background: rgba(255, 152, 0, 0.15);
+      color: #ffb74d;
+      border-color: rgba(255, 152, 0, 0.3);
+    }
+
+    .hwid-badge {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11.5px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 3px 8px;
+      border-radius: 6px;
+      color: #d1d5db;
+      border: 1px solid var(--card-border);
+    }
+
+    .online-indicator {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #10b981;
+      margin-right: 5px;
+      box-shadow: 0 0 6px #10b981;
+    }
+    .offline-indicator {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #6b7280;
+      margin-right: 5px;
+    }
+
+    /* Action buttons in row */
     .action-btn {
-      padding: 5px 10px;
+      padding: 4px 10px;
       font-size: 11.5px;
       border-radius: 6px;
+      font-weight: 600;
     }
-    .btn-approve { background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }
-    .btn-approve:hover { background: #10b981; color: #000; }
-    .btn-reject { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.3); }
-    .btn-reject:hover { background: #ef4444; color: #fff; }
-    .btn-reset { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); }
-    .btn-reset:hover { background: #3b82f6; color: #fff; }
+    .btn-approve {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .btn-approve:hover {
+      background: rgba(16, 185, 129, 0.25);
+    }
+    .btn-reject {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .btn-reject:hover {
+      background: rgba(239, 68, 68, 0.25);
+    }
+    .btn-reset {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .btn-reset:hover {
+      background: rgba(245, 158, 11, 0.25);
+    }
 
     /* Modal */
     .modal {
       display: none;
       position: fixed;
-      inset: 0;
+      top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0, 0, 0, 0.7);
       backdrop-filter: blur(8px);
+      z-index: 1000;
       align-items: center;
       justify-content: center;
-      z-index: 50;
     }
-    .modal.active { display: flex; }
+    .modal.active {
+      display: flex;
+    }
     .modal-content {
-      background: #181c25;
+      background: #161a23;
       border: 1px solid var(--card-border);
       border-radius: 16px;
       width: 480px;
-      padding: 28px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+      max-width: 90%;
+      padding: 24px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
     }
-    .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
-    .modal-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4; }
-    .form-group { margin-bottom: 16px; }
-    .form-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .modal-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.4;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: block;
+    }
     .form-input {
       width: 100%;
       background: rgba(0, 0, 0, 0.3);
       border: 1px solid var(--card-border);
       border-radius: 8px;
-      padding: 10px 14px;
+      padding: 9px 12px;
       color: #fff;
       font-size: 13px;
       outline: none;
     }
-    .form-input:focus { border-color: var(--accent); }
+    .form-input:focus {
+      border-color: var(--accent);
+    }
     .modal-footer {
       display: flex;
       justify-content: flex-end;
       gap: 10px;
       margin-top: 24px;
     }
-
-    .online-indicator {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #10b981;
-      margin-right: 6px;
-      box-shadow: 0 0 8px #10b981;
-    }
-    .offline-indicator {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #6b7280;
-      margin-right: 6px;
-    }
   </style>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, doc, onSnapshot, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getAnalytics, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-analytics.js";
+
+    window.firebaseModules = { initializeApp, getFirestore, collection, doc, onSnapshot, setDoc, deleteDoc, serverTimestamp, getAnalytics, isSupported };
+  </script>
 </head>
 <body>
-
   <!-- Header -->
   <header>
     <div class="brand">
-      <div class="brand-logo">✨</div>
+      <div class="brand-logo">💡</div>
       <div>
-        <h1>Edge Light Admin Console</h1>
-        <p>Live device authorization, active users & hardware license management</p>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <h1>Edge Light Admin Console</h1>
+          <span class="live-pill"><span class="live-dot"></span> Live Firestore Sync</span>
+        </div>
+        <p>Live device monitor, license manager & real-time telemetry</p>
       </div>
     </div>
     <div class="header-actions">
@@ -373,43 +524,62 @@
     </div>
   </header>
 
-  <!-- Stats Grid -->
+  <!-- Stats Grid: Real-time User Counts & Telemetry -->
   <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-title">Total Installs / Downloads <span>📥</span></div>
-      <div class="stat-value" id="statTotal">0</div>
-      <div class="stat-desc">Unique devices registered</div>
+    <div class="stat-card hero">
+      <div class="stat-title">Total Users (Installed) <span>👥</span></div>
+      <div class="stat-value" style="color: #ffb74d;" id="statTotal">0</div>
+      <div class="stat-desc">Total persons using Edge Light</div>
     </div>
     <div class="stat-card">
       <div class="stat-title">Active Users (24h) <span>🟢</span></div>
       <div class="stat-value" style="color: #34d399;" id="statActive">0</div>
-      <div class="stat-desc">Live heartbeats recorded</div>
+      <div class="stat-desc">Devices active in past 24 hours</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-title">Online Right Now <span>⚡</span></div>
+      <div class="stat-value" style="color: #38bdf8;" id="statOnline">0</div>
+      <div class="stat-desc">Heartbeat in last 10 minutes</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-title">Paid Pro Licenses <span>🔒</span></div>
+      <div class="stat-value" style="color: #a78bfa;" id="statApproved">0</div>
+      <div class="stat-desc" id="statConvRate">0% conversion rate</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-title">Total Revenue (₹) <span>💳</span></div>
+      <div class="stat-value" style="color: #fbbf24;" id="statRevenue">₹0</div>
+      <div class="stat-desc">From verified Razorpay purchases</div>
     </div>
     <div class="stat-card">
       <div class="stat-title">Active 3-Day Trials <span>⏳</span></div>
-      <div class="stat-value" style="color: #fbbf24;" id="statTrial">0</div>
-      <div class="stat-desc">Evaluating Edge Light</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-title">Approved Commercial <span>🔒</span></div>
-      <div class="stat-value" style="color: #60a5fa;" id="statApproved">0</div>
-      <div class="stat-desc">Permanent licenses granted</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-title">Rejected / Blocked <span>🚫</span></div>
-      <div class="stat-value" style="color: #f87171;" id="statRejected">0</div>
-      <div class="stat-desc">Unauthorized devices</div>
+      <div class="stat-value" style="color: #facc15;" id="statTrial">0</div>
+      <div class="stat-desc">Currently in evaluation</div>
     </div>
   </div>
 
   <!-- Table Section -->
   <div class="table-container">
     <div class="table-header">
-      <h2 style="font-size: 16px; font-weight: 700;">Authorized Machines & Licenses</h2>
-      <input type="text" class="search-box" id="searchInput" placeholder="Search by Device Name or HWID…">
+      <div>
+        <h2 style="font-size: 16px; font-weight: 700;">Connected Machines & Licenses</h2>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">Auto-refreshes in real-time as users start and operate the application</p>
+      </div>
+      <input type="text" class="search-box" id="searchInput" placeholder="Search by PC Name, User, HWID, or Status…">
     </div>
 
-    <!-- Live Firebase Warning / Setup Notice (shown if Firestore database is not created yet) -->
+    <!-- Filter Tabs -->
+    <div class="filter-tabs">
+      <div class="filter-tab active" data-filter="all">All Devices (<span id="countAll">0</span>)</div>
+      <div class="filter-tab" data-filter="online">🟢 Online Now (<span id="countOnline">0</span>)</div>
+      <div class="filter-tab" data-filter="active">Active Today (<span id="countActive">0</span>)</div>
+      <div class="filter-tab" data-filter="approved">✓ Commercial Pro (<span id="countApproved">0</span>)</div>
+      <div class="filter-tab" data-filter="trial">⏳ Free Trial (<span id="countTrial">0</span>)</div>
+      <div class="filter-tab" data-filter="expired">⌛ Expired (<span id="countExpired">0</span>)</div>
+      <div class="filter-tab" data-filter="rejected">🚫 Revoked (<span id="countRejected">0</span>)</div>
+    </div>
+
+    <!-- Live Firebase Warning / Setup Notice -->
     <div id="dbWarningBanner" class="db-banner" style="display: none;">
       <div class="db-banner-content">
         <div class="db-banner-left">
@@ -423,22 +593,26 @@
       </div>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Status</th>
-          <th>Device Name</th>
-          <th>Hardware ID (HWID)</th>
-          <th>First Installed</th>
-          <th>Last Active</th>
-          <th>Version</th>
-          <th style="text-align: right;">License Actions</th>
-        </tr>
-      </thead>
-      <tbody id="devicesTableBody">
-        <!-- Rendered dynamically -->
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Device & Username</th>
+            <th>Hardware ID (HWID)</th>
+            <th>OS & Display</th>
+            <th>Plan & Expiry</th>
+            <th>Installed</th>
+            <th>Last Active</th>
+            <th>Version</th>
+            <th style="text-align: right;">License Actions</th>
+          </tr>
+        </thead>
+        <tbody id="devicesTableBody">
+          <!-- Rendered dynamically -->
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Firebase Config Modal -->
@@ -448,22 +622,18 @@
       <div class="modal-desc">
         Connected to Firebase project <code>edge-light-24</code>. You can customize the collection name or project credentials below.
       </div>
-      
       <div class="form-group">
-        <label class="form-label" for="cfgProjectId">Firebase Project ID</label>
-        <input type="text" class="form-input" id="cfgProjectId" value="edge-light-24">
+        <label class="form-label">Firebase Project ID</label>
+        <input type="text" class="form-input" id="cfgProjectId" placeholder="edge-light-24">
       </div>
-
       <div class="form-group">
-        <label class="form-label" for="cfgApiKey">Firebase Web API Key</label>
-        <input type="text" class="form-input" id="cfgApiKey" value="AIzaSyD3rx21xx-Fz2iWk367chc3HIcfY2Y5bAU">
+        <label class="form-label">Firestore Collection Name</label>
+        <input type="text" class="form-input" id="cfgCollection" placeholder="licenses">
       </div>
-
       <div class="form-group">
-        <label class="form-label" for="cfgCollection">Collection Name</label>
-        <input type="text" class="form-input" id="cfgCollection" value="licenses">
+        <label class="form-label">Firebase Web API Key</label>
+        <input type="text" class="form-input" id="cfgApiKey" placeholder="AIzaSy...">
       </div>
-
       <div class="modal-footer">
         <button class="btn-secondary" id="closeConfigBtn">Cancel</button>
         <button class="btn-primary" id="saveConfigBtn">Save & Reconnect</button>
@@ -471,21 +641,7 @@
     </div>
   </div>
 
-  <!-- Firebase Web SDK (Modular v10) -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
-    import { 
-      getFirestore, 
-      collection, 
-      doc, 
-      onSnapshot, 
-      setDoc, 
-      deleteDoc, 
-      serverTimestamp 
-    } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
-    import { getAnalytics, isSupported } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-analytics.js";
-
-    // Active Firebase Configuration
+  <script>
     const defaultFirebaseConfig = {
       apiKey: "AIzaSyD3rx21xx-Fz2iWk367chc3HIcfY2Y5bAU",
       authDomain: "edge-light-24.firebaseapp.com",
@@ -496,7 +652,6 @@
       measurementId: "G-79ZK0P075W"
     };
 
-    // Storage keys
     const CFG_PROJECT = 'el_admin_project_id';
     const CFG_KEY = 'el_admin_api_key';
     const CFG_COLLECTION = 'el_admin_collection';
@@ -517,36 +672,54 @@
     let db = null;
     let unsubscribeSnapshot = null;
     let currentDevices = [];
+    let activeFilter = 'all';
 
-    // Fallback demo data shown when database is empty or not yet activated
     const demoDevices = [
       {
         hwid: 'CAA0-7C92-AC5D-B662',
         pcName: 'DESKTOP-PRO-SHANI',
-        status: 'trial',
-        registeredAt: new Date(Date.now() - 3600000 * 18).toISOString(),
-        lastActiveAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-        appVersion: '1.0.3'
+        username: 'shani',
+        osVersion: 'Windows 11 x64',
+        screenResolution: '1920x1080',
+        status: 'approved',
+        planId: 'lifetime',
+        planName: 'Lifetime Pro',
+        amountPaid: 99,
+        registeredAt: new Date(Date.now() - 3600000 * 48).toISOString(),
+        lastActiveAt: new Date(Date.now() - 60000 * 2).toISOString(),
+        appVersion: '1.0.4'
       },
       {
         hwid: '8F2B-44A1-E09C-112A',
         pcName: 'LAPTOP-OFFICE-01',
-        status: 'approved',
-        registeredAt: new Date(Date.now() - 3600000 * 96).toISOString(),
-        lastActiveAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-        appVersion: '1.0.3'
+        username: 'alex',
+        osVersion: 'Windows 10 x64',
+        screenResolution: '2560x1440',
+        status: 'trial',
+        planId: 'trial',
+        planName: '3-Day Free Trial',
+        registeredAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+        lastActiveAt: new Date(Date.now() - 60000 * 4).toISOString(),
+        appVersion: '1.0.4'
       },
       {
         hwid: '3D71-998C-FA02-B817',
         pcName: 'WORKSTATION-X',
-        status: 'expired',
+        username: 'designer',
+        osVersion: 'Windows 11 x64',
+        screenResolution: '3840x2160',
+        status: 'approved',
+        planId: 'monthly',
+        planName: 'Monthly Pass',
+        amountPaid: 29,
+        expiresAt: new Date(Date.now() + 86400000 * 22).toISOString(),
         registeredAt: new Date(Date.now() - 3600000 * 120).toISOString(),
-        lastActiveAt: new Date(Date.now() - 3600000 * 75).toISOString(),
-        appVersion: '1.0.3'
+        lastActiveAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+        appVersion: '1.0.4'
       }
     ];
 
-    function showDbWarning(err) {
+    function showDbWarning() {
       const banner = document.getElementById('dbWarningBanner');
       if (banner) banner.style.display = 'block';
     }
@@ -562,13 +735,19 @@
         unsubscribeSnapshot = null;
       }
 
+      if (!window.firebaseModules) {
+        setTimeout(initFirebase, 200);
+        return;
+      }
+
+      const { initializeApp, getFirestore, collection, onSnapshot, isSupported, getAnalytics } = window.firebaseModules;
       const cfg = getActiveConfig();
+
       try {
         app = initializeApp(cfg);
         db = getFirestore(app);
         isSupported().then(yes => { if (yes) getAnalytics(app); }).catch(() => {});
 
-        // Real-time live Firestore listener on licenses collection
         const colRef = collection(db, cfg.collection);
         unsubscribeSnapshot = onSnapshot(colRef, (snapshot) => {
           hideDbWarning();
@@ -578,46 +757,88 @@
             items.push({
               hwid: f.hwid || docSnap.id,
               pcName: f.pcName || 'Unknown PC',
+              username: f.username || '',
+              osVersion: f.osVersion || '',
+              screenResolution: f.screenResolution || '',
               status: f.status || 'trial',
+              planId: f.planId || (f.status === 'approved' ? 'lifetime' : 'trial'),
+              planName: f.planName || (f.status === 'approved' ? 'Commercial Pro' : '3-Day Free Trial'),
+              licenseKey: f.licenseKey || null,
+              amountPaid: f.amountPaid || (f.status === 'approved' ? 99 : 0),
+              expiresAt: f.expiresAt || null,
               registeredAt: f.registeredAt ? (f.registeredAt.toDate ? f.registeredAt.toDate().toISOString() : f.registeredAt) : '',
               lastActiveAt: f.lastActiveAt ? (f.lastActiveAt.toDate ? f.lastActiveAt.toDate().toISOString() : f.lastActiveAt) : '',
-              appVersion: f.appVersion || '1.0.3'
+              appVersion: f.appVersion || '1.0.4'
             });
           });
 
           if (items.length > 0) {
             currentDevices = items;
-            renderDevices(currentDevices);
           } else {
-            // No items yet in Firestore, show initial guide or demo entries
             currentDevices = [...demoDevices];
-            renderDevices(currentDevices);
           }
+          applyFilterAndRender();
         }, (err) => {
           console.warn('Firestore real-time subscription error:', err.message);
-          showDbWarning(err);
+          showDbWarning();
           currentDevices = [...demoDevices];
-          renderDevices(currentDevices);
+          applyFilterAndRender();
         });
 
       } catch (err) {
         console.error('Firebase initialization error:', err);
-        showDbWarning(err);
+        showDbWarning();
         currentDevices = [...demoDevices];
-        renderDevices(currentDevices);
+        applyFilterAndRender();
       }
     }
 
-    // Expose actions to global scope for button clicks
-    window.updateDeviceStatus = async function(hwid, newStatus) {
+    // License actions
+    window.grantLicense = async function(hwid, planType) {
+      const planName = planType === 'monthly' ? 'Monthly Pass' : planType === 'quarterly' ? '3-Month Pass' : 'Lifetime Pro';
+      let expiresAt = null;
+      if (planType === 'monthly') expiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
+      if (planType === 'quarterly') expiresAt = new Date(Date.now() + 90 * 86400000).toISOString();
+
       if (!db) {
         const d = currentDevices.find(x => x.hwid === hwid);
-        if (d) d.status = newStatus;
-        renderDevices(currentDevices);
+        if (d) {
+          d.status = 'approved';
+          d.planId = planType;
+          d.planName = planName;
+          d.expiresAt = expiresAt;
+          applyFilterAndRender();
+        }
         return;
       }
 
       try {
+        const { doc, setDoc, serverTimestamp } = window.firebaseModules;
+        const cfg = getActiveConfig();
+        const docRef = doc(db, cfg.collection, hwid);
+        await setDoc(docRef, {
+          status: 'approved',
+          planId: planType,
+          planName: planName,
+          expiresAt: expiresAt,
+          hwid: hwid,
+          lastUpdated: serverTimestamp()
+        }, { merge: true });
+      } catch (err) {
+        alert('Could not update Firestore: ' + err.message);
+      }
+    };
+
+    window.updateDeviceStatus = async function(hwid, newStatus) {
+      if (!db) {
+        const d = currentDevices.find(x => x.hwid === hwid);
+        if (d) d.status = newStatus;
+        applyFilterAndRender();
+        return;
+      }
+
+      try {
+        const { doc, setDoc, serverTimestamp } = window.firebaseModules;
         const cfg = getActiveConfig();
         const docRef = doc(db, cfg.collection, hwid);
         await setDoc(docRef, {
@@ -634,10 +855,11 @@
       if (!confirm(`Are you sure you want to delete device ${hwid}?`)) return;
       if (!db) {
         currentDevices = currentDevices.filter(x => x.hwid !== hwid);
-        renderDevices(currentDevices);
+        applyFilterAndRender();
         return;
       }
       try {
+        const { doc, deleteDoc } = window.firebaseModules;
         const cfg = getActiveConfig();
         await deleteDoc(doc(db, cfg.collection, hwid));
       } catch (err) {
@@ -645,71 +867,176 @@
       }
     };
 
-    function renderDevices(list) {
-      const tbody = document.getElementById('devicesTableBody');
-      tbody.innerHTML = '';
+    function humanizeTime(dateStr) {
+      if (!dateStr) return '—';
+      const dt = new Date(dateStr).getTime();
+      const diffSec = Math.max(0, Math.floor((Date.now() - dt) / 1000));
+      if (diffSec < 60) return 'Just now';
+      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+      return `${Math.floor(diffSec / 86400)}d ago`;
+    }
 
-      let total = list.length;
-      let active = 0;
-      let trial = 0;
-      let approved = 0;
-      let rejected = 0;
-
+    function applyFilterAndRender() {
       const now = Date.now();
       const oneDayMs = 24 * 3600 * 1000;
+      const tenMinMs = 10 * 60 * 1000;
+
+      let total = currentDevices.length;
+      let active = 0;
+      let online = 0;
+      let approved = 0;
+      let trial = 0;
+      let expired = 0;
+      let rejected = 0;
+      let revenue = 0;
+
+      currentDevices.forEach(dev => {
+        const lastActiveMs = dev.lastActiveAt ? new Date(dev.lastActiveAt).getTime() : 0;
+        const isOnline = lastActiveMs > 0 && (now - lastActiveMs < tenMinMs);
+        const isActiveToday = lastActiveMs > 0 && (now - lastActiveMs < oneDayMs);
+
+        if (isOnline) online++;
+        if (isActiveToday) active++;
+
+        if (dev.status === 'approved') {
+          approved++;
+          revenue += (dev.amountPaid || (dev.planId === 'monthly' ? 29 : dev.planId === 'quarterly' ? 49 : 99));
+        } else if (dev.status === 'trial') {
+          trial++;
+        } else if (dev.status === 'expired') {
+          expired++;
+        } else if (dev.status === 'rejected' || dev.status === 'revoked') {
+          rejected++;
+        }
+      });
+
+      // Update KPI counters
+      document.getElementById('statTotal').textContent = total;
+      document.getElementById('statActive').textContent = active;
+      document.getElementById('statOnline').textContent = online;
+      document.getElementById('statApproved').textContent = approved;
+      document.getElementById('statTrial').textContent = trial;
+      document.getElementById('statRevenue').textContent = '₹' + revenue.toLocaleString();
+      const convRate = total > 0 ? Math.round((approved / total) * 100) : 0;
+      document.getElementById('statConvRate').textContent = `${convRate}% conversion rate`;
+
+      // Update Tab Badges
+      document.getElementById('countAll').textContent = total;
+      document.getElementById('countOnline').textContent = online;
+      document.getElementById('countActive').textContent = active;
+      document.getElementById('countApproved').textContent = approved;
+      document.getElementById('countTrial').textContent = trial;
+      document.getElementById('countExpired').textContent = expired;
+      document.getElementById('countRejected').textContent = rejected;
+
+      // Filter list
+      const q = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+      const filtered = currentDevices.filter(d => {
+        const lastActiveMs = d.lastActiveAt ? new Date(d.lastActiveAt).getTime() : 0;
+        const isOnline = lastActiveMs > 0 && (now - lastActiveMs < tenMinMs);
+        const isActiveToday = lastActiveMs > 0 && (now - lastActiveMs < oneDayMs);
+
+        if (activeFilter === 'online' && !isOnline) return false;
+        if (activeFilter === 'active' && !isActiveToday) return false;
+        if (activeFilter === 'approved' && d.status !== 'approved') return false;
+        if (activeFilter === 'trial' && d.status !== 'trial') return false;
+        if (activeFilter === 'expired' && d.status !== 'expired') return false;
+        if (activeFilter === 'rejected' && d.status !== 'rejected' && d.status !== 'revoked') return false;
+
+        if (q) {
+          const match = (d.pcName && d.pcName.toLowerCase().includes(q)) ||
+                        (d.username && d.username.toLowerCase().includes(q)) ||
+                        (d.hwid && d.hwid.toLowerCase().includes(q)) ||
+                        (d.status && d.status.toLowerCase().includes(q)) ||
+                        (d.planName && d.planName.toLowerCase().includes(q));
+          if (!match) return false;
+        }
+
+        return true;
+      });
+
+      renderTable(filtered);
+    }
+
+    function renderTable(list) {
+      const tbody = document.getElementById('devicesTableBody');
+      tbody.innerHTML = '';
+      const now = Date.now();
+      const tenMinMs = 10 * 60 * 1000;
+
+      if (list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted);">No devices match current filter.</td></tr>`;
+        return;
+      }
 
       list.forEach(dev => {
         const lastActiveMs = dev.lastActiveAt ? new Date(dev.lastActiveAt).getTime() : 0;
-        const isOnline = lastActiveMs > 0 && (now - lastActiveMs < oneDayMs);
-        if (isOnline) active++;
-
-        if (dev.status === 'approved') approved++;
-        else if (dev.status === 'trial') trial++;
-        else if (dev.status === 'rejected') rejected++;
+        const isOnline = lastActiveMs > 0 && (now - lastActiveMs < tenMinMs);
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>
             <span class="status-pill status-${dev.status}">
-              ${dev.status === 'approved' ? '✓ Approved' : dev.status === 'trial' ? '⏳ 3-Day Trial' : dev.status === 'expired' ? '⌛ Expired' : '🚫 Rejected'}
+              ${dev.status === 'approved' ? '✓ Commercial Pro' : dev.status === 'trial' ? '⏳ 3-Day Trial' : dev.status === 'expired' ? '⌛ Expired' : '🚫 Revoked'}
             </span>
           </td>
           <td>
             <strong>${escapeHtml(dev.pcName)}</strong>
+            ${dev.username ? `<span style="font-size:11.5px;color:var(--text-muted);display:block;">User: ${escapeHtml(dev.username)}</span>` : ''}
           </td>
           <td>
             <span class="hwid-badge">${escapeHtml(dev.hwid)}</span>
           </td>
-          <td style="color: var(--text-muted);">${dev.registeredAt ? new Date(dev.registeredAt).toLocaleDateString() : '—'}</td>
-          <td>
-            ${isOnline ? '<span class="online-indicator"></span>Active' : '<span class="offline-indicator"></span>Inactive'}
-            <span style="font-size:11px;color:var(--text-muted);display:block;">${dev.lastActiveAt ? new Date(dev.lastActiveAt).toLocaleString() : '—'}</span>
+          <td style="font-size:12px;color:var(--text-muted);">
+            <div>${dev.osVersion ? escapeHtml(dev.osVersion) : 'Windows'}</div>
+            <div style="color:rgba(255,255,255,0.4);font-size:11px;">${dev.screenResolution || '1920x1080'}</div>
           </td>
-          <td><span style="color:var(--text-muted);">v${escapeHtml(dev.appVersion)}</span></td>
+          <td>
+            <span class="plan-badge ${dev.planId === 'lifetime' ? 'plan-lifetime' : ''}">
+              ${escapeHtml(dev.planName || 'Trial')}
+            </span>
+            ${dev.expiresAt ? `<span style="display:block;font-size:10.5px;color:var(--text-muted);margin-top:2px;">Exp: ${new Date(dev.expiresAt).toLocaleDateString()}</span>` : (dev.status === 'approved' ? '<span style="display:block;font-size:10.5px;color:#ffb74d;margin-top:2px;">Permanent</span>' : '')}
+          </td>
+          <td style="color: var(--text-muted);font-size:12px;">${dev.registeredAt ? new Date(dev.registeredAt).toLocaleDateString() : '—'}</td>
+          <td>
+            ${isOnline ? '<span class="online-indicator"></span><span style="color:#34d399;font-weight:600;">Online</span>' : '<span class="offline-indicator"></span><span style="color:var(--text-muted);">Offline</span>'}
+            <span style="font-size:11px;color:var(--text-muted);display:block;">${humanizeTime(dev.lastActiveAt)}</span>
+          </td>
+          <td><span style="color:var(--text-muted);font-size:12px;">v${escapeHtml(dev.appVersion)}</span></td>
           <td style="text-align: right;">
-            <div style="display:inline-flex;gap:6px;">
-              <button class="action-btn btn-approve" onclick="updateDeviceStatus('${escapeHtml(dev.hwid)}', 'approved')">Approve</button>
-              <button class="action-btn btn-reject" onclick="updateDeviceStatus('${escapeHtml(dev.hwid)}', 'rejected')">Reject</button>
-              <button class="action-btn btn-reset" onclick="updateDeviceStatus('${escapeHtml(dev.hwid)}', 'trial')">Reset Trial</button>
-              <button class="action-btn btn-reject" style="opacity:0.75;" onclick="deleteDevice('${escapeHtml(dev.hwid)}')">🗑️</button>
+            <div style="display:inline-flex;gap:5px;">
+              <button class="action-btn btn-approve" title="Grant Lifetime License" onclick="grantLicense('${escapeHtml(dev.hwid)}', 'lifetime')">Approve Pro</button>
+              <button class="action-btn btn-reject" title="Revoke Device License" onclick="updateDeviceStatus('${escapeHtml(dev.hwid)}', 'rejected')">Revoke</button>
+              <button class="action-btn btn-reset" title="Reset 3-Day Trial" onclick="updateDeviceStatus('${escapeHtml(dev.hwid)}', 'trial')">Trial</button>
+              <button class="action-btn btn-reject" style="opacity:0.75;" title="Delete Record" onclick="deleteDevice('${escapeHtml(dev.hwid)}')">🗑️</button>
             </div>
           </td>
         `;
         tbody.appendChild(tr);
       });
-
-      document.getElementById('statTotal').textContent = total;
-      document.getElementById('statActive').textContent = active;
-      document.getElementById('statTrial').textContent = trial;
-      document.getElementById('statApproved').textContent = approved;
-      document.getElementById('statRejected').textContent = rejected;
     }
 
     function escapeHtml(s) {
       return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // Modal Events
+    // Filter tab events
+    document.querySelectorAll('.filter-tab').forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        activeFilter = tab.getAttribute('data-filter');
+        applyFilterAndRender();
+      };
+    });
+
+    // Search box
+    document.getElementById('searchInput').oninput = () => {
+      applyFilterAndRender();
+    };
+
+    // Modal
     const modal = document.getElementById('configModal');
     document.getElementById('configBtn').onclick = () => {
       const cfg = getActiveConfig();
@@ -731,18 +1058,7 @@
       initFirebase();
     };
 
-    // Filter search
-    document.getElementById('searchInput').oninput = (e) => {
-      const q = e.target.value.toLowerCase().trim();
-      const filtered = currentDevices.filter(d => 
-        (d.pcName && d.pcName.toLowerCase().includes(q)) || 
-        (d.hwid && d.hwid.toLowerCase().includes(q)) ||
-        (d.status && d.status.toLowerCase().includes(q))
-      );
-      renderDevices(filtered);
-    };
-
-    // Initial Firebase Connection
+    // Start
     initFirebase();
   </script>
 </body>
