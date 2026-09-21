@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const path = require('path');
+const https = require('https');
 const admin = require('firebase-admin');
 require('dotenv').config();
 
@@ -100,7 +101,126 @@ app.post('/api/licenses/register', async (req, res) => {
   }
 });
 
-// 3. Razorpay Payment Webhook Handler (Auto-approves license upon payment)
+// 3. Razorpay Payment Config
+app.get('/api/payment/config', (req, res) => {
+  res.json({
+    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn',
+    currency: 'INR',
+    plans: {
+      monthly: { id: 'monthly', name: 'Monthly Pass', price: 29 },
+      quarterly: { id: 'quarterly', name: '3-Month Pass', price: 49 },
+      lifetime: { id: 'lifetime', name: 'Lifetime Pro', price: 99 }
+    }
+  });
+});
+
+// 4. Create Razorpay Order
+app.post('/api/payment/create-order', async (req, res) => {
+  try {
+    const { amount, planId, hwid } = req.body;
+    const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'REDACTED_RAZORPAY_SECRET';
+
+    const orderAmount = (parseInt(amount, 10) || 49) * 100; // in paise
+    const receipt = `rcpt_${(hwid || 'dev').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}_${Date.now().toString().slice(-6)}`;
+
+    const orderPayload = JSON.stringify({
+      amount: orderAmount,
+      currency: 'INR',
+      receipt: receipt,
+      notes: {
+        hwid: hwid || 'UNSPECIFIED',
+        plan: planId || 'quarterly'
+      }
+    });
+
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+
+    const options = {
+      hostname: 'api.razorpay.com',
+      port: 443,
+      path: '/v1/orders',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${auth}`,
+        'Content-Length': Buffer.byteLength(orderPayload)
+      }
+    };
+
+    const rzpReq = https.request(options, (rzpRes) => {
+      let body = '';
+      rzpRes.on('data', chunk => body += chunk);
+      rzpRes.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          if (rzpRes.statusCode >= 200 && rzpRes.statusCode < 300) {
+            res.json({
+              success: true,
+              orderId: parsed.id,
+              amount: parsed.amount,
+              currency: parsed.currency,
+              keyId: keyId
+            });
+          } else {
+            console.error('[Razorpay Order Error]', parsed);
+            res.status(rzpRes.statusCode).json({ error: parsed.error?.description || 'Failed to create order' });
+          }
+        } catch (e) {
+          res.status(500).json({ error: 'Failed to parse Razorpay response' });
+        }
+      });
+    });
+
+    rzpReq.on('error', (e) => {
+      console.error('[Razorpay Request Error]', e);
+      res.status(500).json({ error: e.message });
+    });
+
+    rzpReq.write(orderPayload);
+    rzpReq.end();
+  } catch (err) {
+    console.error('[Create Order Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. Verify Razorpay Payment Signature and Auto-Activate
+app.post('/api/payment/verify', async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, hwid, planId } = req.body;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'REDACTED_RAZORPAY_SECRET';
+
+    const hmac = crypto.createHmac('sha256', keySecret);
+    hmac.update(`${razorpay_order_id}|${razorpay_payment_id}`);
+    const generatedSignature = hmac.digest('hex');
+
+    if (generatedSignature !== razorpay_signature) {
+      return res.status(400).json({ success: false, error: 'Invalid payment signature' });
+    }
+
+    if (hwid) {
+      const docRef = db.collection(collectionName).doc(hwid);
+      await docRef.set({
+        status: 'approved',
+        planId: planId || 'pro',
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      console.log(`[License Approved] HWID ${hwid} approved via verified checkout ${razorpay_payment_id}`);
+    }
+
+    res.json({ success: true, status: 'approved' });
+  } catch (err) {
+    console.error('[Verify Payment Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. Razorpay Payment Webhook Handler (Auto-approves license upon payment)
 app.post('/api/webhooks/razorpay', async (req, res) => {
   try {
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
