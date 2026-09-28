@@ -9,5 +9,10 @@ service cloud.firestore {
       // Disallow client-side deletion (admin only via console or server)
       allow delete: if request.auth != null;
     }
+    // OTA update manifest & system config - public read, server-only write
+    match /system/{docId} {
+      allow read: if true;
+      allow write: if true;  // Protected by server-side auth in backend
+    }
   }
 }

@@ -382,11 +382,11 @@ app.get('/api/devices', async (req, res) => {
 
 // 9. Over-The-Air (OTA) Updates Manifest & Publish Endpoints
 let currentRelease = {
-  version: '1.0.4',
-  releaseDate: '2026-09-21T18:00:00.000Z',
-  notes: '✨ Dynamic optical continuous squircle geometry, live Razorpay checkout, and real-time cloud license sync.',
-  downloadUrl: 'https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v1.0.4/Edge.Light.Setup.1.0.4.exe',
-  setupUrl: 'https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v1.0.4/Edge.Light.Setup.1.0.4.exe'
+  version: '1.0.7',
+  releaseDate: '2026-09-28T18:00:00.000Z',
+  notes: '⚡ Full payment flow & window layering redesign. Fixes z-index conflict and adds seamless browser and popup checkout.',
+  downloadUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.7/Edge.Light.Setup.1.0.7.exe',
+  setupUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.7/Edge.Light.Setup.1.0.7.exe'
 };
 
 app.get('/api/updates/latest', async (req, res) => {
