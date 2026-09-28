@@ -119,7 +119,11 @@ app.post('/api/payment/create-order', async (req, res) => {
   try {
     const { amount, planId, hwid } = req.body;
     const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
-    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'REDACTED_RAZORPAY_SECRET';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      return res.status(500).json({ error: 'Razorpay Key Secret is not configured on the server' });
+    }
 
     const orderAmount = (parseInt(amount, 10) || 49) * 100; // in paise
     const receipt = `rcpt_${(hwid || 'dev').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}_${Date.now().toString().slice(-6)}`;
@@ -217,7 +221,11 @@ function calculatePlanDetails(planId) {
 app.post('/api/payment/verify', async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, hwid, planId } = req.body;
-    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'REDACTED_RAZORPAY_SECRET';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      return res.status(500).json({ success: false, error: 'Razorpay Key Secret is not configured on the server' });
+    }
 
     const hmac = crypto.createHmac('sha256', keySecret);
     hmac.update(`${razorpay_order_id}|${razorpay_payment_id}`);
