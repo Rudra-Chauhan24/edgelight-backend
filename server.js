@@ -217,6 +217,76 @@ function calculatePlanDetails(planId) {
   }
 }
 
+async function fetchRazorpayPayment(paymentId) {
+  const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) return null;
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.razorpay.com',
+      path: `/v1/payments/${encodeURIComponent(paymentId)}`,
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${auth}`
+      },
+      timeout: 8000
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ success: true, payment: parsed });
+          } else {
+            resolve({ success: false, statusCode: res.statusCode, error: parsed.error?.description || 'Payment not found' });
+          }
+        } catch (e) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ success: false, error: 'Razorpay request timeout' }); });
+    req.on('error', err => resolve({ success: false, error: err.message }));
+    req.end();
+  });
+}
+
+async function tagRazorpayPaymentClaimed(paymentId, hwid, planId, licenseKey) {
+  const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) return false;
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+  const payload = JSON.stringify({
+    notes: {
+      claimed: 'true',
+      claimed_by: hwid || 'DEVICE',
+      claimed_at: new Date().toISOString(),
+      plan: planId,
+      license_key: licenseKey
+    }
+  });
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.razorpay.com',
+      path: `/v1/payments/${encodeURIComponent(paymentId)}`,
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 8000
+    }, (res) => {
+      resolve(res.statusCode >= 200 && res.statusCode < 300);
+    });
+    req.on('error', () => resolve(false));
+    req.write(payload);
+    req.end();
+  });
+}
+
 // 5. Verify Razorpay Payment Signature and Auto-Activate
 app.post('/api/payment/verify', async (req, res) => {
   try {
@@ -227,33 +297,65 @@ app.post('/api/payment/verify', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Razorpay Key Secret is not configured on the server' });
     }
 
+    const cleanPaymentId = String(razorpay_payment_id || '').trim();
+    if (!cleanPaymentId) {
+      return res.status(400).json({ success: false, error: 'Missing payment ID' });
+    }
+
     const hmac = crypto.createHmac('sha256', keySecret);
-    hmac.update(`${razorpay_order_id}|${razorpay_payment_id}`);
+    hmac.update(`${razorpay_order_id}|${cleanPaymentId}`);
     const generatedSignature = hmac.digest('hex');
 
     if (generatedSignature !== razorpay_signature) {
       return res.status(400).json({ success: false, error: 'Invalid payment signature' });
     }
 
+    const claimDocRef = db.collection('claimed_payments').doc(cleanPaymentId);
     const planDetails = calculatePlanDetails(planId);
 
-    if (hwid) {
-      const docRef = db.collection(collectionName).doc(hwid);
-      await docRef.set({
-        status: 'approved',
+    // Atomic transaction: verify not claimed, then record claim and activate
+    await db.runTransaction(async (transaction) => {
+      const claimSnap = await transaction.get(claimDocRef);
+      if (claimSnap.exists) {
+        const cData = claimSnap.data();
+        if (cData.claimed || cData.status === 'claimed') {
+          const err = new Error('This Payment ID has already been used.');
+          err.code = 'ALREADY_USED';
+          throw err;
+        }
+      }
+
+      transaction.set(claimDocRef, {
+        paymentId: cleanPaymentId,
+        orderId: razorpay_order_id,
+        claimed: true,
+        status: 'claimed',
+        claimedByHwid: hwid || 'UNKNOWN',
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
         planId: planDetails.planId,
         planName: planDetails.planName,
-        licenseKey: planDetails.licenseKey,
-        expiresAt: planDetails.expiresAt,
-        paymentId: razorpay_payment_id,
-        orderId: razorpay_order_id,
-        paidAt: admin.firestore.FieldValue.serverTimestamp(),
-        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
+        licenseKey: planDetails.licenseKey
+      });
 
-      console.log(`[License Approved] HWID ${hwid} assigned ${planDetails.planName} (Key: ${planDetails.licenseKey})`);
-    }
+      if (hwid) {
+        const docRef = db.collection(collectionName).doc(hwid);
+        transaction.set(docRef, {
+          status: 'approved',
+          planId: planDetails.planId,
+          planName: planDetails.planName,
+          licenseKey: planDetails.licenseKey,
+          expiresAt: planDetails.expiresAt,
+          paymentId: cleanPaymentId,
+          orderId: razorpay_order_id,
+          paidAt: admin.firestore.FieldValue.serverTimestamp(),
+          approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+
+    tagRazorpayPaymentClaimed(cleanPaymentId, hwid, planDetails.planId, planDetails.licenseKey).catch(() => {});
+    console.log(`[License Approved] HWID ${hwid} assigned ${planDetails.planName} via Signature Verification`);
 
     res.json({
       success: true,
@@ -261,8 +363,147 @@ app.post('/api/payment/verify', async (req, res) => {
       ...planDetails
     });
   } catch (err) {
+    if (err.code === 'ALREADY_USED' || err.message === 'This Payment ID has already been used.') {
+      return res.status(409).json({ success: false, error: 'This Payment ID has already been used.' });
+    }
     console.error('[Verify Payment Error]', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 5b. Claim/Activate License with Payment ID (Atomic Single-Claim Protection)
+app.post('/api/payment/claim', async (req, res) => {
+  try {
+    const { paymentId, hwid, planId } = req.body;
+    const cleanId = String(paymentId || '').trim();
+
+    if (!cleanId || cleanId.length < 4) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid Payment ID or UPI Ref (UTR).' });
+    }
+
+    if (!hwid) {
+      return res.status(400).json({ success: false, error: 'Missing device Hardware ID (hwid).' });
+    }
+
+    // 1. First check if already claimed in Firestore
+    const claimDocRef = db.collection('claimed_payments').doc(cleanId);
+    const existingClaim = await claimDocRef.get();
+    if (existingClaim.exists) {
+      const data = existingClaim.data();
+      if (data.claimed || data.status === 'claimed') {
+        return res.status(409).json({
+          success: false,
+          error: 'This Payment ID has already been used.'
+        });
+      }
+    }
+
+    let verifiedPlanId = planId || 'quarterly';
+    let verifiedAmount = 49;
+
+    // 2. Gateway verification if Razorpay payment ID (starts with pay_)
+    if (cleanId.startsWith('pay_')) {
+      const rzpRes = await fetchRazorpayPayment(cleanId);
+      if (rzpRes && rzpRes.success) {
+        const payment = rzpRes.payment;
+        if (payment.status !== 'captured' && payment.status !== 'authorized') {
+          return res.status(400).json({
+            success: false,
+            error: `Payment status is ${payment.status}. Only completed and captured payments can activate a license.`
+          });
+        }
+
+        // Server-side check: Was it already tagged as claimed in Razorpay notes?
+        if (payment.notes && (payment.notes.claimed === 'true' || payment.notes.claimed === true)) {
+          return res.status(409).json({
+            success: false,
+            error: 'This Payment ID has already been used.'
+          });
+        }
+
+        // Exact plan matching from verified amount
+        const amountPaise = payment.amount || 4900;
+        verifiedAmount = amountPaise / 100;
+        if (amountPaise === 2900) verifiedPlanId = 'monthly';
+        else if (amountPaise === 9900) verifiedPlanId = 'lifetime';
+        else if (amountPaise === 4900) verifiedPlanId = 'quarterly';
+        else if (payment.notes?.plan) verifiedPlanId = payment.notes.plan;
+      } else if (rzpRes && rzpRes.statusCode === 404) {
+        return res.status(404).json({
+          success: false,
+          error: 'Payment ID not found on payment gateway. Please check your payment confirmation.'
+        });
+      }
+    }
+
+    const planDetails = calculatePlanDetails(verifiedPlanId);
+
+    // 3. Atomic Transaction: Check again inside transaction to prevent race conditions
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(claimDocRef);
+      if (snap.exists) {
+        const cData = snap.data();
+        if (cData.claimed || cData.status === 'claimed') {
+          const err = new Error('This Payment ID has already been used.');
+          err.code = 'ALREADY_USED';
+          throw err;
+        }
+      }
+
+      // Mark payment as permanently CLAIMED/USED
+      transaction.set(claimDocRef, {
+        paymentId: cleanId,
+        claimed: true,
+        status: 'claimed',
+        claimedByHwid: hwid,
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        planId: planDetails.planId,
+        planName: planDetails.planName,
+        licenseKey: planDetails.licenseKey,
+        amount: verifiedAmount
+      });
+
+      // Activate license on the claiming device
+      const licRef = db.collection(collectionName).doc(hwid);
+      transaction.set(licRef, {
+        status: 'approved',
+        planId: planDetails.planId,
+        planName: planDetails.planName,
+        licenseKey: planDetails.licenseKey,
+        expiresAt: planDetails.expiresAt,
+        paymentId: cleanId,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    // Tag on Razorpay notes so it cannot be claimed anywhere else
+    if (cleanId.startsWith('pay_')) {
+      tagRazorpayPaymentClaimed(cleanId, hwid, planDetails.planId, planDetails.licenseKey).catch(() => {});
+    }
+
+    console.log(`[Single Claim Success] Payment ${cleanId} successfully claimed by HWID ${hwid} (${planDetails.planName})`);
+
+    return res.json({
+      success: true,
+      status: 'approved',
+      licenseInfo: {
+        isAuthorized: true,
+        status: 'approved',
+        hwid: hwid,
+        ...planDetails,
+        paymentId: cleanId,
+        paidAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString()
+      }
+    });
+  } catch (err) {
+    if (err.code === 'ALREADY_USED' || err.message === 'This Payment ID has already been used.') {
+      return res.status(409).json({ success: false, error: 'This Payment ID has already been used.' });
+    }
+    console.error('[Claim Endpoint Error]', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

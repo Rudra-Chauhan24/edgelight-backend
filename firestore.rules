@@ -1,18 +1,44 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Edge Light licenses collection
+
+    // Unique device licenses & user activity collection
+    // Each document is strictly identified and keyed by unique Hardware ID
     match /licenses/{hwid} {
-      // Allow devices to read their own license status and register
+      // Allow reading device status
       allow read: if true;
-      allow create, update: if true;
-      // Disallow client-side deletion (admin only via console or server)
+
+      // On creation: Ensure document ID matches hwid field, and forbid any sensitive/personal data
+      allow create: if request.resource.data.hwid == hwid
+                    && !('password' in request.resource.data)
+                    && !('cardNumber' in request.resource.data)
+                    && !('card' in request.resource.data)
+                    && !('cvv' in request.resource.data)
+                    && !('secret' in request.resource.data);
+
+      // On update: Ensure client cannot alter another device's hwid or inject sensitive data
+      allow update: if request.resource.data.hwid == hwid
+                    && !('password' in request.resource.data)
+                    && !('cardNumber' in request.resource.data)
+                    && !('card' in request.resource.data)
+                    && !('cvv' in request.resource.data)
+                    && !('secret' in request.resource.data);
+
+      // Client-side deletions are forbidden (admin/service account only)
       allow delete: if request.auth != null;
     }
-    // OTA update manifest & system config - public read, server-only write
+
+    // System aggregate stats and OTA updates
     match /system/{docId} {
       allow read: if true;
-      allow write: if true;  // Protected by server-side auth in backend
+      allow write: if request.auth != null;
+    }
+
+    // Single-use payment claims
+    match /claimed_payments/{paymentId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.paymentId == paymentId;
+      allow delete: if request.auth != null;
     }
   }
 }
