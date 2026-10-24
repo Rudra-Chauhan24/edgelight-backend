@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edge Light — Studio Ring Light for Video Calls on Windows</title>
+  <meta name="description" content="Download Edge Light for Windows. Instant studio ring illumination for Zoom, Google Meet & Teams. Automatically starts when camera is used. Normal interaction with other apps.">
+  <link rel="icon" type="image/png" href="assets/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="landing.css">
+</head>
+<body>
+
+  <!-- Background Ambient Glows -->
+  <div class="glow-sphere glow-top" aria-hidden="true"></div>
+  <div class="glow-sphere glow-right" aria-hidden="true"></div>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="#" class="nav-brand">
+        <div class="brand-icon">
+          <img src="assets/icon.png" alt="Edge Light Logo" width="28" height="28">
+        </div>
+        <span class="brand-name">Edge Light</span>
+        <span class="badge-pill version-badge">v1.0.12</span>
+      </a>
+
+      <div class="nav-links">
+        <a href="#features" class="nav-link">Features</a>
+        <a href="#pricing" class="nav-link">Pricing</a>
+        <a href="#install" class="nav-link">Installation</a>
+        <a href="#faq" class="nav-link">FAQ</a>
+      </div>
+
+      <div class="nav-cta">
+        <a href="https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.12/Edge.Light.Setup.1.0.12.exe" class="btn btn-sm btn-primary" download="Edge.Light.Setup.1.0.12.exe">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Free
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <header class="hero-section" id="top">
+    <div class="container hero-container">
+      
+      <!-- New Feature Pill -->
+      <a href="#features" class="pill-announcement">
+        <span class="pill-spark">✨</span>
+        <span class="pill-text">New: Automatic Camera Detection & Right-Edge Dock</span>
+        <span class="pill-arrow">→</span>
+      </a>
+
+      <!-- Main Headline -->
+      <h1 class="hero-title">
+        Studio Lighting for Your Screen.<br>
+        <span class="gradient-text">Zero Extra Hardware.</span>
+      </h1>
+
+      <!-- Subtitle -->
+      <p class="hero-subtitle">
+        A lightweight screen-edge ring light for your PC. Naturally illuminates your face during <strong>Zoom</strong>, <strong>Google Meet</strong>, and <strong>Teams</strong> meetings with studio-calibrated warm to cool lighting.
+      </p>
+
+      <!-- Primary Action Buttons -->
+      <div class="hero-actions">
+        <a href="https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.12/Edge.Light.Setup.1.0.12.exe" class="btn btn-lg btn-primary" download="Edge.Light.Setup.1.0.12.exe" id="btnDownloadInstaller">
+          <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span>
+            <strong class="btn-title">Download for Windows</strong>
+            <small class="btn-subtitle">Official Setup Installer (.exe) · 64-bit · v1.0.12</small>
+          </span>
+        </a>
+
+        <a href="#features" class="btn btn-lg btn-secondary">
+          <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polygon points="12 8 8 12 12 16 12 8"/>
+          </svg>
+          <span>
+            <strong class="btn-title">Explore Features</strong>
+            <small class="btn-subtitle">Live simulator & studio ring</small>
+          </span>
+        </a>
+      </div>
+
+      <!-- Compatibility & Trust Badges -->
+      <div class="hero-meta">
+        <span class="meta-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6L9 17l-5-5"/></svg>
+          Windows 10 & 11
+        </span>
+        <span class="meta-divider">•</span>
+        <span class="meta-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          100% Offline & Private
+        </span>
+        <span class="meta-divider">•</span>
+        <span class="meta-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Free & Open Source
+        </span>
+      </div>
+
+    </div>
+  </header>
+
+
+  <!-- Features Grid -->
+  <section class="features-section" id="features">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Engineered for Perfection</div>
+        <h2 class="section-title">Everything You Need for Flawless Calls</h2>
+        <p class="section-subtitle">Thoughtfully designed for Windows to match the refined simplicity and fluidity of macOS.</p>
+      </div>
+
+      <div class="features-grid">
+        <!-- Feature 1 -->
+        <div class="feature-card">
+          <div class="card-icon-wrap icon-amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <h3 class="card-title">Auto Camera Detection</h3>
+          <p class="card-desc">Edge Light automatically turns on when your camera starts in apps like Zoom, Teams, or Google Meet, and smoothly fades off when your call ends.</p>
+          <div class="card-pill">Automatic On & Off</div>
+        </div>
+
+        <!-- Feature 2 -->
+        <div class="feature-card">
+          <div class="card-icon-wrap icon-blue">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+          </div>
+          <h3 class="card-title">Normal App Interaction</h3>
+          <p class="card-desc">Edge Light is designed to allow normal interaction with your other applications while the lighting effect is active. Clicks, scrolling, and window switching pass naturally to your windows, tabs, and desktop tools.</p>
+          <div class="card-pill">Work Alongside Apps</div>
+        </div>
+
+        <!-- Feature 3 -->
+        <div class="feature-card">
+          <div class="card-icon-wrap icon-warm">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
+          </div>
+          <h3 class="card-title">Studio Bi-Color Blend</h3>
+          <p class="card-desc">Continuous calibration from 3744K warm tungsten sunset to 6500K crisp cool daylight. Seamless two-stage diffusion flatters every skin tone naturally.</p>
+          <div class="card-pill">3744K – 6500K Kelvin</div>
+        </div>
+
+        <!-- Feature 4 -->
+        <div class="feature-card">
+          <div class="card-icon-wrap icon-green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <h3 class="card-title">Lightweight & Efficient</h3>
+          <p class="card-desc">Built with hardware-accelerated Canvas 2D rendering optimized for low resource usage. Designed to run smoothly in the background alongside games, streaming apps, and video calls.</p>
+          <div class="card-pill">Low Resource Usage</div>
+        </div>
+
+        <!-- Feature 5 -->
+        <div class="feature-card">
+          <div class="card-icon-wrap icon-purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          </div>
+          <h3 class="card-title">Right-Edge Vertical Dock</h3>
+          <p class="card-desc">Floating pill dock docked along the right screen edge. Stays completely clear of webcams, browser tabs, and title bars, opening with smooth Apple spring curves.</p>
+          <div class="card-pill">Fluid Easing Curves</div>
+        </div>
+
+        <!-- Feature 6 -->
+        <div class="feature-card">
+          <div class="card-icon-wrap icon-cyan">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          </div>
+          <h3 class="card-title">Launch at Login</h3>
+          <p class="card-desc">Configured to start automatically with Windows so your ring light is always ready in the background. Easily toggle from the system tray context menu.</p>
+          <div class="card-pill">Always Ready on Boot</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Affordable Pricing Section (Strictly Under ₹100) -->
+  <section class="pricing-section" id="pricing">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Affordable Pricing</div>
+        <h2 class="section-title">Studio Illumination for Under ₹100</h2>
+        <p class="section-subtitle">Every download includes a 3-Day Unrestricted Free Trial. When ready to upgrade, choose the plan that suits you best with instant Razorpay or UPI payment.</p>
+      </div>
+
+      <div class="pricing-grid">
+        <!-- Tier 1: Monthly -->
+        <div class="pricing-card">
+          <div class="pricing-badge">Flexible</div>
+          <h3 class="pricing-name">Monthly Pass</h3>
+          <div class="pricing-price">₹29 <span class="pricing-period">/ month</span></div>
+          <p class="pricing-desc">Perfect for trying out studio edge lighting on important project calls.</p>
+          <ul class="pricing-features">
+            <li>✓ Full Screen Ring Illumination</li>
+            <li>✓ Automatic Camera Call Detection</li>
+            <li>✓ 3744K–6500K Temperature Tuning</li>
+            <li>✓ macOS-Style Fluid Mouse Physics</li>
+            <li>✓ 1 Machine Hardware ID License</li>
+          </ul>
+          <a href="https://rzp.io/rzp/WY3lkA6" target="_blank" rel="noopener noreferrer" class="btn btn-block btn-secondary rzp-pay-btn" data-plan="monthly" data-amount="29">
+            ⚡ Pay ₹29 with Razorpay
+          </a>
+        </div>
+
+        <!-- Tier 2: 3-Month (Popular) -->
+        <div class="pricing-card popular">
+          <div class="pricing-badge badge-popular">MOST POPULAR</div>
+          <h3 class="pricing-name">3-Month Quarter Pass</h3>
+          <div class="pricing-price">₹49 <span class="pricing-period">/ 3 months</span></div>
+          <p class="pricing-desc">Only ~₹16 per month. Our most popular choice for professionals and freelancers.</p>
+          <ul class="pricing-features">
+            <li>✓ Everything in Monthly Pass</li>
+            <li>✓ 90 Days Continuous Studio Glow</li>
+            <li>✓ Adaptive Multi-Resolution Calibration</li>
+            <li>✓ Free Software Updates</li>
+            <li>✓ High Priority Support</li>
+          </ul>
+          <a href="https://rzp.io/rzp/01mOm4K" target="_blank" rel="noopener noreferrer" class="btn btn-block btn-primary rzp-pay-btn" data-plan="quarterly" data-amount="49">
+            ⚡ Pay ₹49 with Razorpay
+          </a>
+        </div>
+
+        <!-- Tier 3: Lifetime Pro -->
+        <div class="pricing-card best-value">
+          <div class="pricing-badge badge-best">BEST VALUE</div>
+          <h3 class="pricing-name">Lifetime Pro</h3>
+          <div class="pricing-price">₹99 <span class="pricing-period">one-time</span></div>
+          <p class="pricing-desc">Pay once, own forever. Never worry about monthly subscriptions or renewals.</p>
+          <ul class="pricing-features">
+            <li>✓ Permanent Lifetime Commercial Access</li>
+            <li>✓ Bound to your PC Hardware ID</li>
+            <li>✓ All Future Pro Upgrades Included</li>
+            <li>✓ Zero Recurring Charges Ever</li>
+            <li>✓ VIP Priority Support</li>
+          </ul>
+          <a href="https://rzp.io/rzp/K30Pa9v" target="_blank" rel="noopener noreferrer" class="btn btn-block btn-secondary rzp-pay-btn" data-plan="lifetime" data-amount="99">
+            ⚡ Pay ₹99 with Razorpay
+          </a>
+        </div>
+      </div>
+
+      <!-- Scan to Pay UPI Banner -->
+      <div class="upi-banner">
+        <div class="upi-banner-left">
+          <span class="upi-icon">📱</span>
+          <div>
+            <strong>Prefer Instant UPI? (Google Pay, PhonePe, Paytm, BHIM)</strong>
+            <p>Scan the dynamic QR code in the app setup wizard, or send directly to <code class="copy-upi" id="copyUpiCode" data-upi="edgelight@upi" title="Click to copy UPI ID">edgelight@upi 📋</code> with your Hardware ID.</p>
+          </div>
+        </div>
+        <div class="upi-badge">UPI Supported</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Easy Installation Guide -->
+  <section class="install-section" id="install">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Quick Setup</div>
+        <h2 class="section-title">Up & Running in 30 Seconds</h2>
+        <p class="section-subtitle">No accounts, no cloud setup, and no complex configurations. Choose your preferred installation method below.</p>
+      </div>
+
+      <div class="install-cards-wrapper" style="max-width: 680px; margin: 0 auto;">
+        <!-- Single Setup Installer -->
+        <div class="install-method-card highlighted">
+          <div class="method-header">
+            <span class="method-tag">Official Release</span>
+            <h3 class="method-title">Windows Installer (NSIS Setup)</h3>
+            <p class="method-desc">Complete installation with First-Run Setup Wizard, desktop shortcut, Start Menu entry, and automated launch-at-login integration.</p>
+          </div>
+
+          <ol class="step-list">
+            <li>
+              <span class="step-num">1</span>
+              <div>
+                <strong>Download Setup File</strong>
+                <p>Click below to download <code>Edge.Light.Setup.1.0.12.exe</code> directly to your computer.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <div>
+                <strong>Run 1-Click Installer</strong>
+                <p>Launch the setup file. The interactive First-Run Setup Wizard automatically calibrates display fit and screen ring.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <div>
+                <strong>Instant Camera Illumination</strong>
+                <p>Edge Light activates automatically whenever a meeting or video call starts using your camera.</p>
+              </div>
+            </li>
+          </ol>
+
+          <a href="https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.12/Edge.Light.Setup.1.0.12.exe" class="btn btn-block btn-primary" download="Edge.Light.Setup.1.0.12.exe" id="btnDownloadInstallerBottom">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Setup Installer (82 MB)
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- FAQ Section -->
+  <section class="faq-section" id="faq">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Common Questions</div>
+        <h2 class="section-title">Frequently Asked Questions</h2>
+      </div>
+
+      <div class="faq-accordion">
+        <details class="faq-item" open>
+          <summary class="faq-question">
+            <span>How does the automatic camera detection work?</span>
+            <span class="faq-icon">+</span>
+          </summary>
+          <div class="faq-answer">
+            Edge Light senses when your webcam activates for a call. Whenever a meeting app (like Zoom or Microsoft Teams) or browser (like Google Meet) starts your camera, Edge Light automatically turns on to illuminate your face. As soon as your camera turns off or your call ends, the illumination smoothly fades away.
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary class="faq-question">
+            <span>Will the light block my mouse clicks on tabs or buttons?</span>
+            <span class="faq-icon">+</span>
+          </summary>
+          <div class="faq-answer">
+            No. Edge Light is designed to allow normal interaction with your other applications while the lighting effect is active. Mouse clicks, window switching, and scrolling pass directly to your browser tabs, windows, and desktop tools underneath. Only clicking inside the floating dock controls interacts with Edge Light.
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary class="faq-question">
+            <span>Can I customize the color temperature and thickness?</span>
+            <span class="faq-icon">+</span>
+          </summary>
+          <div class="faq-answer">
+            Yes! Hover over the right screen edge to open the floating dock. You can smoothly slide between 3744K warm candle glow to 6500K cool daylight, and adjust ring thickness from 20px to 180px.
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary class="faq-question">
+            <span>What are the global keyboard shortcuts?</span>
+            <span class="faq-icon">+</span>
+          </summary>
+          <div class="faq-answer">
+            <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> toggles Edge Light on/off from any application or full-screen game. <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd> safely quits the application.
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA Footer -->
+  <footer class="footer">
+    <div class="container footer-container">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <div class="brand-icon">
+            <img src="assets/icon.png" alt="Edge Light" width="24" height="24">
+          </div>
+          <span class="brand-name">Edge Light</span>
+          <span class="badge-pill">v1.0.12</span>
+        </div>
+        <p class="footer-tagline">Studio illumination for your screen. Built for high-clarity video calls.</p>
+      </div>
+
+      <div class="footer-bottom">
+        <div class="footer-links">
+          <a href="https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.12/Edge.Light.Setup.1.0.12.exe" download="Edge.Light.Setup.1.0.12.exe">Download Setup (.exe)</a>
+          <a href="#features">Features</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#install">Installation</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <div class="footer-copy">
+          MIT License · Free & Open Source · Edge Light Desktop
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="landing.js"></script>
+</body>
+</html>

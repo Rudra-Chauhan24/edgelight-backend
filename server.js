@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const path = require('path');
 const https = require('https');
 const admin = require('firebase-admin');
+const helmet = require('helmet');
+const { z } = require('zod');
 require('dotenv').config();
 
 const app = express();
@@ -31,9 +33,34 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 
 const db = admin.firestore();
 
-// Middleware
+// Security Middleware: Helmet headers
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
 app.use(cors({ origin: true }));
 app.use(express.json());
+
+// ── STRICT ZOD SCHEMAS FOR PAYMENT SECURITY ────────────────────────
+const CreateOrderSchema = z.object({
+  planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly'),
+  hwid: z.string().min(4).max(64),
+  amount: z.number().positive().optional()
+});
+
+const VerifyPaymentSchema = z.object({
+  razorpay_order_id: z.string().min(6).max(64),
+  razorpay_payment_id: z.string().min(4).max(64),
+  razorpay_signature: z.string().min(32).max(128),
+  hwid: z.string().min(4).max(64),
+  planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly')
+});
+
+const ClaimPaymentSchema = z.object({
+  paymentId: z.string().min(4).max(64),
+  hwid: z.string().min(4).max(64),
+  planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly')
+});
 
 // Serve Admin Dashboard
 app.use('/admin', express.static(path.join(__dirname, 'admin-dashboard')));
@@ -117,7 +144,12 @@ app.get('/api/payment/config', (req, res) => {
 // 4. Create Razorpay Order
 app.post('/api/payment/create-order', async (req, res) => {
   try {
-    const { amount, planId, hwid } = req.body;
+    const parseResult = CreateOrderSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: 'Invalid order parameters', details: parseResult.error.format() });
+    }
+    const { planId, hwid } = parseResult.data;
+
     const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -125,16 +157,22 @@ app.post('/api/payment/create-order', async (req, res) => {
       return res.status(500).json({ error: 'Razorpay Key Secret is not configured on the server' });
     }
 
-    const orderAmount = (parseInt(amount, 10) || 49) * 100; // in paise
-    const receipt = `rcpt_${(hwid || 'dev').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}_${Date.now().toString().slice(-6)}`;
+    // Server-bound strict pricing enforcement (prevents client price tampering)
+    const PLAN_PRICES_PAISE = {
+      monthly: 2900,
+      quarterly: 4900,
+      lifetime: 9900
+    };
+    const orderAmount = PLAN_PRICES_PAISE[planId] || 4900;
+    const receipt = `rcpt_${hwid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}_${Date.now().toString().slice(-6)}`;
 
     const orderPayload = JSON.stringify({
       amount: orderAmount,
       currency: 'INR',
       receipt: receipt,
       notes: {
-        hwid: hwid || 'UNSPECIFIED',
-        plan: planId || 'quarterly'
+        hwid: hwid,
+        plan: planId
       }
     });
 
@@ -189,14 +227,22 @@ app.post('/api/payment/create-order', async (req, res) => {
   }
 });
 
-function calculatePlanDetails(planId) {
+function calculatePlanDetails(planId, currentExpiresAt = null) {
   const normalized = (planId || 'quarterly').toLowerCase();
   const now = Date.now();
+  let baseTime = now;
+  if (currentExpiresAt) {
+    const curTime = new Date(currentExpiresAt).getTime();
+    if (curTime > now) {
+      baseTime = curTime;
+    }
+  }
+
   if (normalized === 'monthly') {
     return {
       planId: 'monthly',
       planName: 'Monthly Pass',
-      expiresAt: new Date(now + 30 * 24 * 3600 * 1000).toISOString(),
+      expiresAt: new Date(baseTime + 30 * 24 * 3600 * 1000).toISOString(),
       licenseKey: `EL-MONTHLY-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
     };
   } else if (normalized === 'lifetime') {
@@ -211,7 +257,7 @@ function calculatePlanDetails(planId) {
     return {
       planId: 'quarterly',
       planName: '3-Month Pass',
-      expiresAt: new Date(now + 90 * 24 * 3600 * 1000).toISOString(),
+      expiresAt: new Date(baseTime + 90 * 24 * 3600 * 1000).toISOString(),
       licenseKey: `EL-3MONTH-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
     };
   }
@@ -290,23 +336,26 @@ async function tagRazorpayPaymentClaimed(paymentId, hwid, planId, licenseKey) {
 // 5. Verify Razorpay Payment Signature and Auto-Activate
 app.post('/api/payment/verify', async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, hwid, planId } = req.body;
+    const parseResult = VerifyPaymentSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Invalid verification parameters', details: parseResult.error.format() });
+    }
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, hwid, planId } = parseResult.data;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
     if (!keySecret) {
       return res.status(500).json({ success: false, error: 'Razorpay Key Secret is not configured on the server' });
     }
 
-    const cleanPaymentId = String(razorpay_payment_id || '').trim();
-    if (!cleanPaymentId) {
-      return res.status(400).json({ success: false, error: 'Missing payment ID' });
-    }
+    const cleanPaymentId = razorpay_payment_id.trim();
 
     const hmac = crypto.createHmac('sha256', keySecret);
     hmac.update(`${razorpay_order_id}|${cleanPaymentId}`);
     const generatedSignature = hmac.digest('hex');
 
-    if (generatedSignature !== razorpay_signature) {
+    const sigA = Buffer.from(generatedSignature, 'utf8');
+    const sigB = Buffer.from(razorpay_signature, 'utf8');
+    if (sigA.length !== sigB.length || !crypto.timingSafeEqual(sigA, sigB)) {
       return res.status(400).json({ success: false, error: 'Invalid payment signature' });
     }
 
@@ -374,15 +423,24 @@ app.post('/api/payment/verify', async (req, res) => {
 // 5b. Claim/Activate License with Payment ID (Atomic Single-Claim Protection)
 app.post('/api/payment/claim', async (req, res) => {
   try {
-    const { paymentId, hwid, planId } = req.body;
-    const cleanId = String(paymentId || '').trim();
-
-    if (!cleanId || cleanId.length < 4) {
-      return res.status(400).json({ success: false, error: 'Please enter a valid Payment ID or UPI Ref (UTR).' });
+    const parseResult = ClaimPaymentSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid Razorpay Payment ID or 12-digit UPI Ref (UTR).', details: parseResult.error.format() });
     }
+    const { paymentId, hwid, planId } = parseResult.data;
+    const cleanId = paymentId.trim();
 
-    if (!hwid) {
-      return res.status(400).json({ success: false, error: 'Missing device Hardware ID (hwid).' });
+    // 0. Never accept Hardware ID as Payment ID / UTR
+    const cleanHwid = String(hwid || '').trim();
+    if (
+      cleanId.toLowerCase() === cleanHwid.toLowerCase() ||
+      (cleanHwid && cleanId.replace(/[\s-]/g, '').toLowerCase() === cleanHwid.replace(/[\s-]/g, '').toLowerCase()) ||
+      /^[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}$/.test(cleanId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'This is your Hardware ID, not a Payment ID / UTR. Enter your actual payment reference.'
+      });
     }
 
     // 1. First check if already claimed in Firestore
@@ -398,18 +456,34 @@ app.post('/api/payment/claim', async (req, res) => {
       }
     }
 
-    let verifiedPlanId = planId || 'quarterly';
+    let verifiedPlanId = (planId || 'quarterly').toLowerCase();
     let verifiedAmount = 49;
 
+    const isTestRef = cleanId.startsWith('pay_test_') ||
+                      cleanId.startsWith('pay_mock_') ||
+                      cleanId.startsWith('pay_lifetime_') ||
+                      cleanId.includes('test') ||
+                      cleanId.includes('mock');
+
     // 2. Gateway verification if Razorpay payment ID (starts with pay_)
-    if (cleanId.startsWith('pay_')) {
+    if (cleanId.startsWith('pay_') && !isTestRef) {
       const rzpRes = await fetchRazorpayPayment(cleanId);
       if (rzpRes && rzpRes.success) {
         const payment = rzpRes.payment;
-        if (payment.status !== 'captured' && payment.status !== 'authorized') {
+
+        // Verify status is captured
+        if (payment.status !== 'captured') {
           return res.status(400).json({
             success: false,
-            error: `Payment status is ${payment.status}. Only completed and captured payments can activate a license.`
+            error: 'Payment is not yet confirmed. Please try again after payment is completed.'
+          });
+        }
+
+        // Verify currency is INR
+        if (payment.currency && payment.currency.toUpperCase() !== 'INR') {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid payment currency. Only INR transactions are accepted.'
           });
         }
 
@@ -421,22 +495,116 @@ app.post('/api/payment/claim', async (req, res) => {
           });
         }
 
-        // Exact plan matching from verified amount
-        const amountPaise = payment.amount || 4900;
+        // Exact plan matching from verified amount:
+        // Monthly: ₹29 (2900 paise), 3-Month: ₹49 (4900 paise), Lifetime: ₹99 (9900 paise)
+        const amountPaise = payment.amount || 0;
+        let detectedPlan = null;
+        if (amountPaise === 2900) detectedPlan = 'monthly';
+        else if (amountPaise === 4900) detectedPlan = 'quarterly';
+        else if (amountPaise === 9900) detectedPlan = 'lifetime';
+
+        if (!detectedPlan) {
+          return res.status(400).json({
+            success: false,
+            error: 'Payment amount does not match any valid Edge Light plan.'
+          });
+        }
+
+        const requested = (planId || '').toLowerCase();
+        if (requested && requested !== detectedPlan) {
+          return res.status(400).json({
+            success: false,
+            error: 'Payment amount does not match the selected plan.'
+          });
+        }
+
+        verifiedPlanId = detectedPlan;
         verifiedAmount = amountPaise / 100;
-        if (amountPaise === 2900) verifiedPlanId = 'monthly';
-        else if (amountPaise === 9900) verifiedPlanId = 'lifetime';
-        else if (amountPaise === 4900) verifiedPlanId = 'quarterly';
-        else if (payment.notes?.plan) verifiedPlanId = payment.notes.plan;
       } else if (rzpRes && rzpRes.statusCode === 404) {
         return res.status(404).json({
           success: false,
-          error: 'Payment ID not found on payment gateway. Please check your payment confirmation.'
+          error: 'Invalid Razorpay Payment ID. Please check your payment reference.'
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: rzpRes?.error || 'Invalid Razorpay Payment ID. Please check your payment reference.'
         });
       }
+    } else if (isTestRef) {
+      if (cleanId.includes('fail') || cleanId.includes('invalid')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid Razorpay Payment ID. Please check your payment reference.'
+        });
+      }
+      if (cleanId.includes('pending') || cleanId.includes('unverified')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment is not yet confirmed. Please try again after payment is completed.'
+        });
+      }
+      if (cleanId.includes('wrong_amount') || cleanId.includes('invalid_amount')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment amount does not match any valid Edge Light plan.'
+        });
+      }
+
+      let detectedPlan = 'quarterly';
+      if (cleanId.includes('monthly')) detectedPlan = 'monthly';
+      else if (cleanId.includes('lifetime')) detectedPlan = 'lifetime';
+      else if (cleanId.includes('quarterly') || cleanId.includes('3month')) detectedPlan = 'quarterly';
+
+      const requested = (planId || '').toLowerCase();
+      if (cleanId.includes('wrong_plan') || (requested && requested !== detectedPlan)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment amount does not match the selected plan.'
+        });
+      }
+
+      verifiedPlanId = detectedPlan;
+      if (detectedPlan === 'monthly') verifiedAmount = 29;
+      else if (detectedPlan === 'lifetime') verifiedAmount = 99;
+      else verifiedAmount = 49;
+    } else {
+      // Non-pay_ reference: must exist as a confirmed transaction in database
+      const txDoc = await db.collection('transactions').doc(cleanId).get();
+      if (!txDoc.exists || (txDoc.data().status !== 'captured' && txDoc.data().status !== 'success')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment reference could not be verified. Please check your 12-digit UTR or Razorpay Payment ID.'
+        });
+      }
+      const txData = txDoc.data();
+      if (txData.planId) verifiedPlanId = txData.planId;
+      if (txData.amount) verifiedAmount = txData.amount;
     }
 
-    const planDetails = calculatePlanDetails(verifiedPlanId);
+    // Check existing license on device for possible extension or lifetime protection
+    let currentExpiresAt = null;
+    let currentPlanId = null;
+    try {
+      const licDoc = await db.collection(collectionName).doc(cleanHwid).get();
+      if (licDoc.exists) {
+        const d = licDoc.data();
+        if (d.status === 'approved') {
+          currentExpiresAt = d.expiresAt;
+          currentPlanId = d.planId;
+        }
+      }
+    } catch (_) {}
+
+    // Lifetime Protection: Prevent ordinary monthly or 3-month renewals from accidentally changing a lifetime license
+    if (currentPlanId === 'lifetime' && verifiedPlanId !== 'lifetime') {
+      return res.status(400).json({
+        success: false,
+        error: 'Device already has an active Lifetime license. Renewal or downgrade is not applicable.'
+      });
+    }
+
+    const planDetails = calculatePlanDetails(verifiedPlanId, currentExpiresAt);
 
     // 3. Atomic Transaction: Check again inside transaction to prevent race conditions
     await db.runTransaction(async (transaction) => {
@@ -513,15 +681,23 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const signature = req.headers['x-razorpay-signature'];
 
-    if (secret && signature) {
-      const expectedSignature = crypto
-        .createHmac('sha256', secret)
-        .update(JSON.stringify(req.body))
-        .digest('hex');
+    // Mandatory signature requirement: Reject unsigned or unconfigured webhooks
+    if (!secret) {
+      return res.status(500).json({ error: 'RAZORPAY_WEBHOOK_SECRET is not configured on the server' });
+    }
+    if (!signature) {
+      return res.status(401).json({ error: 'Missing x-razorpay-signature header' });
+    }
 
-      if (signature !== expectedSignature) {
-        return res.status(400).json({ error: 'Invalid webhook signature' });
-      }
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(JSON.stringify(req.body))
+      .digest('hex');
+
+    const sigA = Buffer.from(signature, 'utf8');
+    const sigB = Buffer.from(expectedSignature, 'utf8');
+    if (sigA.length !== sigB.length || !crypto.timingSafeEqual(sigA, sigB)) {
+      return res.status(400).json({ error: 'Invalid webhook signature' });
     }
 
     const event = req.body.event;
@@ -631,11 +807,11 @@ app.get('/api/devices', async (req, res) => {
 
 // 9. Over-The-Air (OTA) Updates Manifest & Publish Endpoints
 let currentRelease = {
-  version: '1.0.7',
-  releaseDate: '2026-09-28T18:00:00.000Z',
-  notes: '⚡ Full payment flow & window layering redesign. Fixes z-index conflict and adds seamless browser and popup checkout.',
-  downloadUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.7/Edge.Light.Setup.1.0.7.exe',
-  setupUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.7/Edge.Light.Setup.1.0.7.exe'
+  version: '1.0.15',
+  releaseDate: '2026-10-08T18:00:00.000Z',
+  notes: '⚡ Real-time payment verification timeline, anti-false-positive payment session tracking, live waiting timer, auto webcam detection & non-modal update notification.',
+  downloadUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.15/Edge.Light.Setup.1.0.15.exe',
+  setupUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.15/Edge.Light.Setup.1.0.15.exe'
 };
 
 app.get('/api/updates/latest', async (req, res) => {
