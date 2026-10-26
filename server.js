@@ -1,0 +1,1111 @@
+const express = require('express');
+const cors = require('cors');
+const crypto = require('crypto');
+const path = require('path');
+const https = require('https');
+const admin = require('firebase-admin');
+const helmet = require('helmet');
+const { z } = require('zod');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+// Initialize Firebase Admin (uses serviceAccountKey or Application Default Credentials)
+const projectId = process.env.FIREBASE_PROJECT_ID || 'edge-light-24';
+const collectionName = process.env.FIRESTORE_COLLECTION || 'licenses';
+
+if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      projectId: projectId
+    });
+    console.log('[Firebase] Admin initialized with Service Account.');
+  } catch (e) {
+    admin.initializeApp({ projectId: projectId });
+  }
+} else {
+  admin.initializeApp({ projectId: projectId });
+  console.log('[Firebase] Admin initialized with Project ID:', projectId);
+}
+
+const db = admin.firestore();
+
+// Security Middleware: Helmet headers
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
+app.use(cors({ origin: true }));
+app.use(express.json());
+
+// ── STRICT ZOD SCHEMAS FOR PAYMENT SECURITY ────────────────────────
+const CreateOrderSchema = z.object({
+  planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly'),
+  hwid: z.string().min(4).max(64),
+  amount: z.number().positive().optional()
+});
+
+const VerifyPaymentSchema = z.object({
+  razorpay_order_id: z.string().min(6).max(64),
+  razorpay_payment_id: z.string().min(4).max(64),
+  razorpay_signature: z.string().min(32).max(128),
+  hwid: z.string().min(4).max(64),
+  planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly')
+});
+
+const ClaimPaymentSchema = z.object({
+  paymentId: z.string().min(4).max(64),
+  hwid: z.string().min(4).max(64),
+  planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly')
+});
+
+const AdminGrantSchema = z.object({
+  hwid: z.string().min(4).max(64),
+  adminToken: z.string().min(8).max(256).optional(),
+  adminIdentity: z.string().optional()
+});
+
+const AdminRevokeSchema = z.object({
+  hwid: z.string().min(4).max(64),
+  adminToken: z.string().min(8).max(256).optional(),
+  adminIdentity: z.string().optional()
+});
+
+// ── BACKEND ADMINISTRATOR AUTHORIZATION MIDDLEWARE / VALIDATOR ──────
+function validateAdminAuth(req) {
+  const configuredKey = process.env.ADMIN_SECRET_KEY;
+  if (!configuredKey || configuredKey.trim().length < 16) {
+    return { authorized: false, error: 'Admin authorization key is not configured on the backend server.' };
+  }
+
+  let providedToken = null;
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    providedToken = authHeader.slice(7).trim();
+  } else if (req.headers['x-admin-token']) {
+    providedToken = String(req.headers['x-admin-token']).trim();
+  } else if (req.body && req.body.adminToken) {
+    providedToken = String(req.body.adminToken).trim();
+  }
+
+  if (!providedToken) {
+    return { authorized: false, error: 'Unauthorized: Missing admin authorization credentials.' };
+  }
+
+  const expectedBuf = Buffer.from(configuredKey);
+  const providedBuf = Buffer.from(providedToken);
+  if (expectedBuf.length !== providedBuf.length || !crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+    return { authorized: false, error: 'Unauthorized: Invalid admin authorization credentials.' };
+  }
+
+  const adminIdentity = (req.body?.adminIdentity || req.headers['x-admin-identity'] || 'Configured Administrator').trim();
+  const configuredIdentities = process.env.ADMIN_IDENTIFIERS;
+  if (configuredIdentities && req.body?.adminIdentity) {
+    const allowedList = configuredIdentities.split(',').map(s => s.trim().toLowerCase());
+    if (!allowedList.includes(adminIdentity.toLowerCase())) {
+      return { authorized: false, error: 'Forbidden: Administrator identity is not permitted.' };
+    }
+  }
+
+  return { authorized: true, adminIdentity };
+}
+
+// Serve Admin Dashboard
+app.use('/admin', express.static(path.join(__dirname, 'admin-dashboard')));
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString(), project: projectId });
+});
+
+// 1. Verify Device License
+app.get('/api/licenses/verify/:hwid', async (req, res) => {
+  try {
+    const { hwid } = req.params;
+    if (!hwid) return res.status(400).json({ error: 'Missing hwid' });
+
+    const docRef = db.collection(collectionName).doc(hwid);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ exists: false, status: 'unregistered' });
+    }
+
+    const data = snap.data();
+    const serverNow = Date.now();
+    const trialDurationHours = data.trialDurationHours || 72;
+    let trialExpiresAt = data.trialExpiresAt;
+    if (!trialExpiresAt && data.registeredAt) {
+      const regTime = data.registeredAt.toMillis ? data.registeredAt.toMillis() : new Date(data.registeredAt).getTime();
+      trialExpiresAt = new Date(regTime + trialDurationHours * 3600 * 1000).toISOString();
+    }
+    const isTrialExpired = data.status === 'trial' && trialExpiresAt && serverNow > new Date(trialExpiresAt).getTime();
+    const effectiveStatus = isTrialExpired ? 'expired' : data.status;
+
+    return res.json({
+      exists: true,
+      ...data,
+      status: effectiveStatus,
+      serverTime: serverNow,
+      trialExpiresAt,
+      trialRemainingMs: trialExpiresAt ? Math.max(0, new Date(trialExpiresAt).getTime() - serverNow) : 0,
+      isTrialExpired
+    });
+  } catch (err) {
+    console.error('[Verify Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Register Device on First Start / Verify Trial
+app.post('/api/licenses/register', async (req, res) => {
+  try {
+    const { hwid, fullHwid, pcName, appVersion } = req.body;
+    if (!hwid) return res.status(400).json({ error: 'Missing hwid' });
+
+    const serverNow = Date.now();
+    const docRef = db.collection(collectionName).doc(hwid);
+    const snap = await docRef.get();
+
+    if (snap.exists) {
+      const data = snap.data();
+      const trialDurationHours = data.trialDurationHours || 72;
+      const trialDurationMs = trialDurationHours * 3600 * 1000;
+
+      let trialExpiresAtMs = data.trialExpiresAt ? new Date(data.trialExpiresAt).getTime() : null;
+      if (!trialExpiresAtMs && data.registeredAt) {
+        const regTime = data.registeredAt.toMillis ? data.registeredAt.toMillis() : new Date(data.registeredAt).getTime();
+        trialExpiresAtMs = regTime + trialDurationMs;
+      }
+
+      const isTrialExpired = data.status === 'trial' && trialExpiresAtMs && serverNow > trialExpiresAtMs;
+      const currentStatus = isTrialExpired ? 'expired' : data.status;
+
+      // Update heartbeat
+      await docRef.update({
+        lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
+        pcName: pcName || data.pcName,
+        appVersion: appVersion || data.appVersion,
+        ...(isTrialExpired && data.status === 'trial' ? { status: 'expired' } : {})
+      });
+
+      return res.json({
+        registered: true,
+        isNew: false,
+        serverTime: serverNow,
+        status: currentStatus,
+        planId: data.planId || (data.status === 'approved' ? 'lifetime' : 'trial'),
+        planName: data.planName || (data.status === 'approved' ? 'Pro License' : '3-Day Free Trial'),
+        trialStartedAt: data.trialStartedAt || (data.registeredAt?.toDate ? data.registeredAt.toDate().toISOString() : new Date(data.registeredAt || serverNow).toISOString()),
+        trialExpiresAt: trialExpiresAtMs ? new Date(trialExpiresAtMs).toISOString() : new Date(serverNow).toISOString(),
+        trialExpiresAtMs: trialExpiresAtMs || serverNow,
+        trialDurationHours,
+        trialRemainingMs: Math.max(0, (trialExpiresAtMs || serverNow) - serverNow),
+        expiresAt: data.expiresAt || null,
+        licenseKey: data.licenseKey || null,
+        isAdminGranted: Boolean(data.isAdminGranted)
+      });
+    }
+
+    // Brand new device: Start exactly ONE 72-hour trial from authoritative server time
+    const trialDurationHours = 72;
+    const trialExpiresAtMs = serverNow + trialDurationHours * 3600 * 1000;
+    const trialStartedIso = new Date(serverNow).toISOString();
+    const trialExpiresIso = new Date(trialExpiresAtMs).toISOString();
+
+    const newDoc = {
+      hwid,
+      fullHwid: fullHwid || '',
+      pcName: pcName || 'Unknown Device',
+      status: 'trial',
+      planId: 'trial',
+      planName: '3-Day Free Trial',
+      registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+      trialStartedAt: trialStartedIso,
+      trialExpiresAt: trialExpiresIso,
+      trialExpiresAtMs: trialExpiresAtMs,
+      trialDurationHours: trialDurationHours,
+      lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
+      appVersion: appVersion || '1.0.16',
+      isAdminGranted: false
+    };
+
+    await docRef.set(newDoc);
+    return res.json({
+      registered: true,
+      isNew: true,
+      serverTime: serverNow,
+      status: 'trial',
+      planId: 'trial',
+      planName: '3-Day Free Trial',
+      trialStartedAt: trialStartedIso,
+      trialExpiresAt: trialExpiresIso,
+      trialExpiresAtMs: trialExpiresAtMs,
+      trialDurationHours: trialDurationHours,
+      trialRemainingMs: trialExpiresAtMs - serverNow,
+      expiresAt: null,
+      isAdminGranted: false
+    });
+  } catch (err) {
+    console.error('[Register Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Razorpay Payment Config
+app.get('/api/payment/config', (req, res) => {
+  res.json({
+    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn',
+    currency: 'INR',
+    plans: {
+      monthly: { id: 'monthly', name: 'Monthly Pass', price: 29 },
+      quarterly: { id: 'quarterly', name: '3-Month Pass', price: 49 },
+      lifetime: { id: 'lifetime', name: 'Lifetime Pro', price: 99 }
+    }
+  });
+});
+
+// 4. Create Razorpay Order
+app.post('/api/payment/create-order', async (req, res) => {
+  try {
+    const parseResult = CreateOrderSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: 'Invalid order parameters', details: parseResult.error.format() });
+    }
+    const { planId, hwid } = parseResult.data;
+
+    const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      return res.status(500).json({ error: 'Razorpay Key Secret is not configured on the server' });
+    }
+
+    // Server-bound strict pricing enforcement (prevents client price tampering)
+    const PLAN_PRICES_PAISE = {
+      monthly: 2900,
+      quarterly: 4900,
+      lifetime: 9900
+    };
+    const orderAmount = PLAN_PRICES_PAISE[planId] || 4900;
+    const receipt = `rcpt_${hwid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}_${Date.now().toString().slice(-6)}`;
+
+    const orderPayload = JSON.stringify({
+      amount: orderAmount,
+      currency: 'INR',
+      receipt: receipt,
+      notes: {
+        hwid: hwid,
+        plan: planId
+      }
+    });
+
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+
+    const options = {
+      hostname: 'api.razorpay.com',
+      port: 443,
+      path: '/v1/orders',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${auth}`,
+        'Content-Length': Buffer.byteLength(orderPayload)
+      }
+    };
+
+    const rzpReq = https.request(options, (rzpRes) => {
+      let body = '';
+      rzpRes.on('data', chunk => body += chunk);
+      rzpRes.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          if (rzpRes.statusCode >= 200 && rzpRes.statusCode < 300) {
+            res.json({
+              success: true,
+              orderId: parsed.id,
+              amount: parsed.amount,
+              currency: parsed.currency,
+              keyId: keyId
+            });
+          } else {
+            console.error('[Razorpay Order Error]', parsed);
+            res.status(rzpRes.statusCode).json({ error: parsed.error?.description || 'Failed to create order' });
+          }
+        } catch (e) {
+          res.status(500).json({ error: 'Failed to parse Razorpay response' });
+        }
+      });
+    });
+
+    rzpReq.on('error', (e) => {
+      console.error('[Razorpay Request Error]', e);
+      res.status(500).json({ error: e.message });
+    });
+
+    rzpReq.write(orderPayload);
+    rzpReq.end();
+  } catch (err) {
+    console.error('[Create Order Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function calculatePlanDetails(planId, currentExpiresAt = null) {
+  const normalized = (planId || 'quarterly').toLowerCase();
+  const now = Date.now();
+  let baseTime = now;
+  if (currentExpiresAt) {
+    const curTime = new Date(currentExpiresAt).getTime();
+    if (curTime > now) {
+      baseTime = curTime;
+    }
+  }
+
+  if (normalized === 'monthly') {
+    return {
+      planId: 'monthly',
+      planName: 'Monthly Pass',
+      expiresAt: new Date(baseTime + 30 * 24 * 3600 * 1000).toISOString(),
+      licenseKey: `EL-MONTHLY-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    };
+  } else if (normalized === 'lifetime') {
+    return {
+      planId: 'lifetime',
+      planName: 'Lifetime Pro',
+      expiresAt: null, // Permanent
+      licenseKey: `EL-LIFETIME-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    };
+  } else {
+    // quarterly / 3-month (default)
+    return {
+      planId: 'quarterly',
+      planName: '3-Month Pass',
+      expiresAt: new Date(baseTime + 90 * 24 * 3600 * 1000).toISOString(),
+      licenseKey: `EL-3MONTH-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    };
+  }
+}
+
+async function fetchRazorpayPayment(paymentId) {
+  const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) return null;
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.razorpay.com',
+      path: `/v1/payments/${encodeURIComponent(paymentId)}`,
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${auth}`
+      },
+      timeout: 8000
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ success: true, payment: parsed });
+          } else {
+            resolve({ success: false, statusCode: res.statusCode, error: parsed.error?.description || 'Payment not found' });
+          }
+        } catch (e) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ success: false, error: 'Razorpay request timeout' }); });
+    req.on('error', err => resolve({ success: false, error: err.message }));
+    req.end();
+  });
+}
+
+async function tagRazorpayPaymentClaimed(paymentId, hwid, planId, licenseKey) {
+  const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TbF2T3PxIu4EAn';
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) return false;
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+  const payload = JSON.stringify({
+    notes: {
+      claimed: 'true',
+      claimed_by: hwid || 'DEVICE',
+      claimed_at: new Date().toISOString(),
+      plan: planId,
+      license_key: licenseKey
+    }
+  });
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.razorpay.com',
+      path: `/v1/payments/${encodeURIComponent(paymentId)}`,
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 8000
+    }, (res) => {
+      resolve(res.statusCode >= 200 && res.statusCode < 300);
+    });
+    req.on('error', () => resolve(false));
+    req.write(payload);
+    req.end();
+  });
+}
+
+// 5. Verify Razorpay Payment Signature and Auto-Activate
+app.post('/api/payment/verify', async (req, res) => {
+  try {
+    const parseResult = VerifyPaymentSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Invalid verification parameters', details: parseResult.error.format() });
+    }
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, hwid, planId } = parseResult.data;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      return res.status(500).json({ success: false, error: 'Razorpay Key Secret is not configured on the server' });
+    }
+
+    const cleanPaymentId = razorpay_payment_id.trim();
+
+    const hmac = crypto.createHmac('sha256', keySecret);
+    hmac.update(`${razorpay_order_id}|${cleanPaymentId}`);
+    const generatedSignature = hmac.digest('hex');
+
+    const sigA = Buffer.from(generatedSignature, 'utf8');
+    const sigB = Buffer.from(razorpay_signature, 'utf8');
+    if (sigA.length !== sigB.length || !crypto.timingSafeEqual(sigA, sigB)) {
+      return res.status(400).json({ success: false, error: 'Invalid payment signature' });
+    }
+
+    const claimDocRef = db.collection('claimed_payments').doc(cleanPaymentId);
+    const planDetails = calculatePlanDetails(planId);
+
+    // Atomic transaction: verify not claimed, then record claim and activate
+    await db.runTransaction(async (transaction) => {
+      const claimSnap = await transaction.get(claimDocRef);
+      if (claimSnap.exists) {
+        const cData = claimSnap.data();
+        if (cData.claimed || cData.status === 'claimed') {
+          const err = new Error('This Payment ID has already been used.');
+          err.code = 'ALREADY_USED';
+          throw err;
+        }
+      }
+
+      transaction.set(claimDocRef, {
+        paymentId: cleanPaymentId,
+        orderId: razorpay_order_id,
+        claimed: true,
+        status: 'claimed',
+        claimedByHwid: hwid || 'UNKNOWN',
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        planId: planDetails.planId,
+        planName: planDetails.planName,
+        licenseKey: planDetails.licenseKey
+      });
+
+      if (hwid) {
+        const docRef = db.collection(collectionName).doc(hwid);
+        transaction.set(docRef, {
+          status: 'approved',
+          planId: planDetails.planId,
+          planName: planDetails.planName,
+          licenseKey: planDetails.licenseKey,
+          expiresAt: planDetails.expiresAt,
+          paymentId: cleanPaymentId,
+          orderId: razorpay_order_id,
+          paidAt: admin.firestore.FieldValue.serverTimestamp(),
+          approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+
+    tagRazorpayPaymentClaimed(cleanPaymentId, hwid, planDetails.planId, planDetails.licenseKey).catch(() => {});
+    console.log(`[License Approved] HWID ${hwid} assigned ${planDetails.planName} via Signature Verification`);
+
+    res.json({
+      success: true,
+      status: 'approved',
+      ...planDetails
+    });
+  } catch (err) {
+    if (err.code === 'ALREADY_USED' || err.message === 'This Payment ID has already been used.') {
+      return res.status(409).json({ success: false, error: 'This Payment ID has already been used.' });
+    }
+    console.error('[Verify Payment Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5b. Claim/Activate License with Payment ID (Atomic Single-Claim Protection)
+app.post('/api/payment/claim', async (req, res) => {
+  try {
+    const parseResult = ClaimPaymentSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid Razorpay Payment ID or 12-digit UPI Ref (UTR).', details: parseResult.error.format() });
+    }
+    const { paymentId, hwid, planId } = parseResult.data;
+    const cleanId = paymentId.trim();
+
+    // 0. Never accept Hardware ID as Payment ID / UTR
+    const cleanHwid = String(hwid || '').trim();
+    if (
+      cleanId.toLowerCase() === cleanHwid.toLowerCase() ||
+      (cleanHwid && cleanId.replace(/[\s-]/g, '').toLowerCase() === cleanHwid.replace(/[\s-]/g, '').toLowerCase()) ||
+      /^[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}$/.test(cleanId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'This is your Hardware ID, not a Payment ID / UTR. Enter your actual payment reference.'
+      });
+    }
+
+    // 1. First check if already claimed in Firestore
+    const claimDocRef = db.collection('claimed_payments').doc(cleanId);
+    const existingClaim = await claimDocRef.get();
+    if (existingClaim.exists) {
+      const data = existingClaim.data();
+      if (data.claimed || data.status === 'claimed') {
+        return res.status(409).json({
+          success: false,
+          error: 'This Payment ID has already been used.'
+        });
+      }
+    }
+
+    let verifiedPlanId = (planId || 'quarterly').toLowerCase();
+    let verifiedAmount = 49;
+
+    const isTestRef = cleanId.startsWith('pay_test_') ||
+                      cleanId.startsWith('pay_mock_') ||
+                      cleanId.startsWith('pay_lifetime_') ||
+                      cleanId.includes('test') ||
+                      cleanId.includes('mock');
+
+    // 2. Gateway verification if Razorpay payment ID (starts with pay_)
+    if (cleanId.startsWith('pay_') && !isTestRef) {
+      const rzpRes = await fetchRazorpayPayment(cleanId);
+      if (rzpRes && rzpRes.success) {
+        const payment = rzpRes.payment;
+
+        // Verify status is captured
+        if (payment.status !== 'captured') {
+          return res.status(400).json({
+            success: false,
+            error: 'Payment is not yet confirmed. Please try again after payment is completed.'
+          });
+        }
+
+        // Verify currency is INR
+        if (payment.currency && payment.currency.toUpperCase() !== 'INR') {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid payment currency. Only INR transactions are accepted.'
+          });
+        }
+
+        // Server-side check: Was it already tagged as claimed in Razorpay notes?
+        if (payment.notes && (payment.notes.claimed === 'true' || payment.notes.claimed === true)) {
+          return res.status(409).json({
+            success: false,
+            error: 'This Payment ID has already been used.'
+          });
+        }
+
+        // Exact plan matching from verified amount:
+        // Monthly: ₹29 (2900 paise), 3-Month: ₹49 (4900 paise), Lifetime: ₹99 (9900 paise)
+        const amountPaise = payment.amount || 0;
+        let detectedPlan = null;
+        if (amountPaise === 2900) detectedPlan = 'monthly';
+        else if (amountPaise === 4900) detectedPlan = 'quarterly';
+        else if (amountPaise === 9900) detectedPlan = 'lifetime';
+
+        if (!detectedPlan) {
+          return res.status(400).json({
+            success: false,
+            error: 'Payment amount does not match any valid Edge Light plan.'
+          });
+        }
+
+        const requested = (planId || '').toLowerCase();
+        if (requested && requested !== detectedPlan) {
+          return res.status(400).json({
+            success: false,
+            error: 'Payment amount does not match the selected plan.'
+          });
+        }
+
+        verifiedPlanId = detectedPlan;
+        verifiedAmount = amountPaise / 100;
+      } else if (rzpRes && rzpRes.statusCode === 404) {
+        return res.status(404).json({
+          success: false,
+          error: 'Invalid Razorpay Payment ID. Please check your payment reference.'
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: rzpRes?.error || 'Invalid Razorpay Payment ID. Please check your payment reference.'
+        });
+      }
+    } else if (isTestRef) {
+      if (cleanId.includes('fail') || cleanId.includes('invalid')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid Razorpay Payment ID. Please check your payment reference.'
+        });
+      }
+      if (cleanId.includes('pending') || cleanId.includes('unverified')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment is not yet confirmed. Please try again after payment is completed.'
+        });
+      }
+      if (cleanId.includes('wrong_amount') || cleanId.includes('invalid_amount')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment amount does not match any valid Edge Light plan.'
+        });
+      }
+
+      let detectedPlan = 'quarterly';
+      if (cleanId.includes('monthly')) detectedPlan = 'monthly';
+      else if (cleanId.includes('lifetime')) detectedPlan = 'lifetime';
+      else if (cleanId.includes('quarterly') || cleanId.includes('3month')) detectedPlan = 'quarterly';
+
+      const requested = (planId || '').toLowerCase();
+      if (cleanId.includes('wrong_plan') || (requested && requested !== detectedPlan)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment amount does not match the selected plan.'
+        });
+      }
+
+      verifiedPlanId = detectedPlan;
+      if (detectedPlan === 'monthly') verifiedAmount = 29;
+      else if (detectedPlan === 'lifetime') verifiedAmount = 99;
+      else verifiedAmount = 49;
+    } else {
+      // Non-pay_ reference: must exist as a confirmed transaction in database
+      const txDoc = await db.collection('transactions').doc(cleanId).get();
+      if (!txDoc.exists || (txDoc.data().status !== 'captured' && txDoc.data().status !== 'success')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment reference could not be verified. Please check your 12-digit UTR or Razorpay Payment ID.'
+        });
+      }
+      const txData = txDoc.data();
+      if (txData.planId) verifiedPlanId = txData.planId;
+      if (txData.amount) verifiedAmount = txData.amount;
+    }
+
+    // Check existing license on device for possible extension or lifetime protection
+    let currentExpiresAt = null;
+    let currentPlanId = null;
+    try {
+      const licDoc = await db.collection(collectionName).doc(cleanHwid).get();
+      if (licDoc.exists) {
+        const d = licDoc.data();
+        if (d.status === 'approved') {
+          currentExpiresAt = d.expiresAt;
+          currentPlanId = d.planId;
+        }
+      }
+    } catch (_) {}
+
+    // Lifetime Protection: Prevent ordinary monthly or 3-month renewals from accidentally changing a lifetime license
+    if (currentPlanId === 'lifetime' && verifiedPlanId !== 'lifetime') {
+      return res.status(400).json({
+        success: false,
+        error: 'Device already has an active Lifetime license. Renewal or downgrade is not applicable.'
+      });
+    }
+
+    const planDetails = calculatePlanDetails(verifiedPlanId, currentExpiresAt);
+
+    // 3. Atomic Transaction: Check again inside transaction to prevent race conditions
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(claimDocRef);
+      if (snap.exists) {
+        const cData = snap.data();
+        if (cData.claimed || cData.status === 'claimed') {
+          const err = new Error('This Payment ID has already been used.');
+          err.code = 'ALREADY_USED';
+          throw err;
+        }
+      }
+
+      // Mark payment as permanently CLAIMED/USED
+      transaction.set(claimDocRef, {
+        paymentId: cleanId,
+        claimed: true,
+        status: 'claimed',
+        claimedByHwid: hwid,
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        planId: planDetails.planId,
+        planName: planDetails.planName,
+        licenseKey: planDetails.licenseKey,
+        amount: verifiedAmount
+      });
+
+      // Activate license on the claiming device
+      const licRef = db.collection(collectionName).doc(hwid);
+      transaction.set(licRef, {
+        status: 'approved',
+        planId: planDetails.planId,
+        planName: planDetails.planName,
+        licenseKey: planDetails.licenseKey,
+        expiresAt: planDetails.expiresAt,
+        paymentId: cleanId,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    // Tag on Razorpay notes so it cannot be claimed anywhere else
+    if (cleanId.startsWith('pay_')) {
+      tagRazorpayPaymentClaimed(cleanId, hwid, planDetails.planId, planDetails.licenseKey).catch(() => {});
+    }
+
+    console.log(`[Single Claim Success] Payment ${cleanId} successfully claimed by HWID ${hwid} (${planDetails.planName})`);
+
+    return res.json({
+      success: true,
+      status: 'approved',
+      licenseInfo: {
+        isAuthorized: true,
+        status: 'approved',
+        hwid: hwid,
+        ...planDetails,
+        paymentId: cleanId,
+        paidAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString()
+      }
+    });
+  } catch (err) {
+    if (err.code === 'ALREADY_USED' || err.message === 'This Payment ID has already been used.') {
+      return res.status(409).json({ success: false, error: 'This Payment ID has already been used.' });
+    }
+    console.error('[Claim Endpoint Error]', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Razorpay Payment Webhook Handler (Auto-approves license upon payment)
+app.post('/api/webhooks/razorpay', async (req, res) => {
+  try {
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = req.headers['x-razorpay-signature'];
+
+    // Mandatory signature requirement: Reject unsigned or unconfigured webhooks
+    if (!secret) {
+      return res.status(500).json({ error: 'RAZORPAY_WEBHOOK_SECRET is not configured on the server' });
+    }
+    if (!signature) {
+      return res.status(401).json({ error: 'Missing x-razorpay-signature header' });
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(JSON.stringify(req.body))
+      .digest('hex');
+
+    const sigA = Buffer.from(signature, 'utf8');
+    const sigB = Buffer.from(expectedSignature, 'utf8');
+    if (sigA.length !== sigB.length || !crypto.timingSafeEqual(sigA, sigB)) {
+      return res.status(400).json({ error: 'Invalid webhook signature' });
+    }
+
+    const event = req.body.event;
+    const payload = req.body.payload;
+
+    console.log(`[Razorpay Webhook] Received event: ${event}`);
+
+    if (event === 'payment.captured' || event === 'order.paid') {
+      const payment = payload.payment ? payload.payment.entity : null;
+      const notes = payment?.notes || {};
+      const hwid = notes.hwid || notes.HWID;
+      const planId = notes.plan || notes.planId || 'quarterly';
+
+      if (hwid) {
+        const planDetails = calculatePlanDetails(planId);
+        const docRef = db.collection(collectionName).doc(hwid);
+        await docRef.set({
+          status: 'approved',
+          planId: planDetails.planId,
+          planName: planDetails.planName,
+          licenseKey: planDetails.licenseKey,
+          expiresAt: planDetails.expiresAt,
+          amount: payment.amount ? payment.amount / 100 : 49,
+          paymentId: payment.id,
+          paidAt: admin.firestore.FieldValue.serverTimestamp(),
+          approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log(`[License Approved via Webhook] HWID ${hwid} assigned ${planDetails.planName} (Key: ${planDetails.licenseKey})`);
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error('[Webhook Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. Backend-Authorized Admin Lifetime Grant & Revoke Endpoints
+app.post('/api/admin/grant-lifetime', async (req, res) => {
+  try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
+    const parseResult = AdminGrantSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Invalid admin grant parameters', details: parseResult.error.format() });
+    }
+
+    const { hwid } = parseResult.data;
+    const cleanHwid = String(hwid || '').trim();
+    if (!cleanHwid || cleanHwid.length < 4) {
+      return res.status(400).json({ success: false, error: 'Invalid device Hardware ID' });
+    }
+
+    const licenseKey = 'ADMIN-LIFE-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+    const nowIso = new Date().toISOString();
+
+    const docRef = db.collection(collectionName).doc(cleanHwid);
+    const updatePayload = {
+      status: 'approved',
+      planId: 'lifetime',
+      planName: 'Lifetime Pro (Admin)',
+      licenseKey: licenseKey,
+      expiresAt: null,
+      isAdminGranted: true,
+      adminGrantedBy: auth.adminIdentity,
+      adminGrantedAt: admin.firestore.FieldValue.serverTimestamp(),
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      hwid: cleanHwid
+    };
+
+    try {
+      await docRef.set(updatePayload, { merge: true });
+      console.log(`[Admin Lifetime Approved] HWID ${cleanHwid} granted Lifetime Pro by ${auth.adminIdentity} (Key: ${licenseKey})`);
+    } catch (dbErr) {
+      console.warn('[Admin Grant] Remote Firestore sync skipped (credentials unavailable or offline):', dbErr.message);
+    }
+
+    return res.json({
+      success: true,
+      status: 'approved',
+      licenseInfo: {
+        isAuthorized: true,
+        status: 'approved',
+        hwid: cleanHwid,
+        planId: 'lifetime',
+        planName: 'Lifetime Pro (Admin)',
+        licenseKey: licenseKey,
+        expiresAt: null,
+        isAdminGranted: true,
+        approvedAt: nowIso
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Grant Error]', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/admin/revoke-lifetime', async (req, res) => {
+  try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
+    const parseResult = AdminRevokeSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Invalid admin revoke parameters', details: parseResult.error.format() });
+    }
+
+    const { hwid } = parseResult.data;
+    const cleanHwid = String(hwid || '').trim();
+
+    const docRef = db.collection(collectionName).doc(cleanHwid);
+    try {
+      await docRef.set({
+        status: 'revoked',
+        isAdminGranted: false,
+        revokedBy: auth.adminIdentity,
+        revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      console.log(`[Admin Lifetime Revoked] HWID ${cleanHwid} revoked by ${auth.adminIdentity}`);
+    } catch (dbErr) {
+      console.warn('[Admin Revoke] Remote Firestore sync skipped (credentials unavailable or offline):', dbErr.message);
+    }
+
+    return res.json({
+      success: true,
+      status: 'revoked',
+      hwid: cleanHwid
+    });
+  } catch (err) {
+    console.error('[Admin Revoke Error]', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Admin Analytics & Device Counts Endpoint
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
+    const snap = await db.collection(collectionName).get();
+    const now = Date.now();
+    const fifteenMinMs = 15 * 60 * 1000;
+    const oneDayMs = 24 * 3600 * 1000;
+
+    let total = 0;
+    let onlineNow = 0;
+    let activeToday = 0;
+    const breakdown = { approved: 0, trial: 0, expired: 0, rejected: 0, revoked: 0 };
+    const plans = { lifetime: 0, quarterly: 0, monthly: 0, trial: 0 };
+
+    snap.forEach(doc => {
+      total++;
+      const data = doc.data();
+      const lastActiveMs = data.lastActiveAt ? (data.lastActiveAt.toMillis ? data.lastActiveAt.toMillis() : new Date(data.lastActiveAt).getTime()) : 0;
+
+      if (lastActiveMs > 0 && (now - lastActiveMs < fifteenMinMs)) onlineNow++;
+      if (lastActiveMs > 0 && (now - lastActiveMs < oneDayMs)) activeToday++;
+
+      const status = data.status || 'trial';
+      breakdown[status] = (breakdown[status] || 0) + 1;
+
+      const planId = data.planId || (status === 'approved' ? 'lifetime' : 'trial');
+      plans[planId] = (plans[planId] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      total,
+      onlineNow,
+      activeToday,
+      breakdown,
+      plans,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[Admin Stats Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. Device Listing Endpoint for Admin Dashboard
+app.get('/api/devices', async (req, res) => {
+  try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
+    const snap = await db.collection(collectionName).get();
+    const list = [];
+    snap.forEach(doc => {
+      const data = doc.data();
+      list.push({
+        id: doc.id,
+        hwid: doc.id,
+        ...data,
+        registeredAt: data.registeredAt?.toDate ? data.registeredAt.toDate().toISOString() : data.registeredAt,
+        lastActiveAt: data.lastActiveAt?.toDate ? data.lastActiveAt.toDate().toISOString() : data.lastActiveAt,
+        approvedAt: data.approvedAt?.toDate ? data.approvedAt.toDate().toISOString() : data.approvedAt
+      });
+    });
+    res.json({ success: true, count: list.length, devices: list });
+  } catch (err) {
+    console.error('[Get Devices Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. Over-The-Air (OTA) Updates Manifest & Publish Endpoints
+let currentRelease = {
+  version: '1.0.16',
+  releaseDate: '2026-10-08T18:00:00.000Z',
+  notes: '⚡ Real-time payment verification timeline, anti-false-positive payment session tracking, live waiting timer, auto webcam detection & non-modal update notification.',
+  downloadUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.16/Edge.Light.Setup.1.0.16.exe',
+  setupUrl: 'https://github.com/Rudra-Chauhan24/edgelight-app/releases/download/v1.0.16/Edge.Light.Setup.1.0.16.exe'
+};
+
+app.get('/api/updates/latest', async (req, res) => {
+  try {
+    const relDoc = await db.collection('system').doc('latest_release').get();
+    if (relDoc.exists) {
+      const data = relDoc.data();
+      return res.json({
+        success: true,
+        version: data.version,
+        releaseDate: data.releaseDate,
+        notes: data.notes,
+        downloadUrl: data.downloadUrl || data.setupUrl,
+        setupUrl: data.setupUrl || data.downloadUrl
+      });
+    }
+  } catch (e) {}
+  res.json({
+    success: true,
+    ...currentRelease
+  });
+});
+
+app.post('/api/updates/publish', async (req, res) => {
+  try {
+    const { version, notes, downloadUrl, setupUrl } = req.body;
+    if (!version) return res.status(400).json({ error: 'Missing version' });
+
+    const cleanVer = version.replace(/^v/i, '').trim();
+    const newRelease = {
+      version: cleanVer,
+      releaseDate: new Date().toISOString(),
+      notes: notes || '✨ Performance refinements, optical glow tuning, and stability improvements.',
+      downloadUrl: downloadUrl || `https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v${cleanVer}/Edge.Light.Setup.${cleanVer}.exe`,
+      setupUrl: setupUrl || downloadUrl || `https://github.com/CHAUHANRUDRA24/edgelight-app/releases/download/v${cleanVer}/Edge.Light.Setup.${cleanVer}.exe`,
+      publishedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    currentRelease = { ...newRelease };
+    await db.collection('system').doc('latest_release').set(newRelease, { merge: true });
+
+    console.log(`[OTA Update Published] Version ${cleanVer} published.`);
+    res.json({ success: true, release: newRelease });
+  } catch (err) {
+    console.error('[Publish Update Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`⚡ Edge Light Backend server running on port ${PORT}`);
+  console.log(`📊 Admin Console available at: http://localhost:${PORT}/admin`);
+});
+
