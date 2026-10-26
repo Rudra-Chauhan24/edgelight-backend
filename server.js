@@ -33,6 +33,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 }
 
 const db = admin.firestore();
+const localMemoryStore = new Map();
 
 // Security Middleware: Helmet headers
 app.use(helmet({
@@ -128,14 +129,20 @@ app.get('/api/licenses/verify/:hwid', async (req, res) => {
     const { hwid } = req.params;
     if (!hwid) return res.status(400).json({ error: 'Missing hwid' });
 
-    const docRef = db.collection(collectionName).doc(hwid);
-    const snap = await docRef.get();
+    let data = null;
+    try {
+      const docRef = db.collection(collectionName).doc(hwid);
+      const snap = await docRef.get();
+      if (snap.exists) data = snap.data();
+    } catch (_) {}
+    if (!data && localMemoryStore.has(hwid)) {
+      data = localMemoryStore.get(hwid);
+    }
 
-    if (!snap.exists) {
+    if (!data) {
       return res.status(404).json({ exists: false, status: 'unregistered' });
     }
 
-    const data = snap.data();
     const serverNow = Date.now();
     const trialDurationHours = data.trialDurationHours || 72;
     let trialExpiresAt = data.trialExpiresAt;
@@ -168,11 +175,18 @@ app.post('/api/licenses/register', async (req, res) => {
     if (!hwid) return res.status(400).json({ error: 'Missing hwid' });
 
     const serverNow = Date.now();
-    const docRef = db.collection(collectionName).doc(hwid);
-    const snap = await docRef.get();
+    let data = null;
+    let docRef = null;
+    try {
+      docRef = db.collection(collectionName).doc(hwid);
+      const snap = await docRef.get();
+      if (snap.exists) data = snap.data();
+    } catch (_) {}
+    if (!data && localMemoryStore.has(hwid)) {
+      data = localMemoryStore.get(hwid);
+    }
 
-    if (snap.exists) {
-      const data = snap.data();
+    if (data) {
       const trialDurationHours = data.trialDurationHours || 72;
       const trialDurationMs = trialDurationHours * 3600 * 1000;
 
@@ -185,13 +199,23 @@ app.post('/api/licenses/register', async (req, res) => {
       const isTrialExpired = data.status === 'trial' && trialExpiresAtMs && serverNow > trialExpiresAtMs;
       const currentStatus = isTrialExpired ? 'expired' : data.status;
 
-      // Update heartbeat
-      await docRef.update({
-        lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
-        pcName: pcName || data.pcName,
-        appVersion: appVersion || data.appVersion,
-        ...(isTrialExpired && data.status === 'trial' ? { status: 'expired' } : {})
-      });
+      // Update heartbeat in memory and firestore
+      data.lastActiveAt = new Date().toISOString();
+      data.pcName = pcName || data.pcName;
+      data.appVersion = appVersion || data.appVersion;
+      if (isTrialExpired && data.status === 'trial') data.status = 'expired';
+      localMemoryStore.set(hwid, data);
+
+      if (docRef) {
+        try {
+          await docRef.update({
+            lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
+            pcName: pcName || data.pcName,
+            appVersion: appVersion || data.appVersion,
+            ...(isTrialExpired && data.status === 'trial' ? { status: 'expired' } : {})
+          });
+        } catch (_) {}
+      }
 
       return res.json({
         registered: true,
@@ -224,17 +248,27 @@ app.post('/api/licenses/register', async (req, res) => {
       status: 'trial',
       planId: 'trial',
       planName: '3-Day Free Trial',
-      registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+      registeredAt: trialStartedIso,
       trialStartedAt: trialStartedIso,
       trialExpiresAt: trialExpiresIso,
       trialExpiresAtMs: trialExpiresAtMs,
       trialDurationHours: trialDurationHours,
-      lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastActiveAt: trialStartedIso,
       appVersion: appVersion || '1.0.16',
       isAdminGranted: false
     };
 
-    await docRef.set(newDoc);
+    localMemoryStore.set(hwid, newDoc);
+    if (docRef) {
+      try {
+        await docRef.set({
+          ...newDoc,
+          registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastActiveAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      } catch (_) {}
+    }
+
     return res.json({
       registered: true,
       isNew: true,
