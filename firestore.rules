@@ -3,42 +3,53 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Unique device licenses & user activity collection
-    // Each document is strictly identified and keyed by unique Hardware ID
+    // Keyed strictly by unique Hardware ID
     match /licenses/{hwid} {
       // Allow reading device status
       allow read: if true;
 
-      // On creation: Ensure document ID matches hwid field, and forbid any sensitive/personal data
+      // On creation: Normal clients can only register an initial 'trial' device.
+      // Privileged entitlements (approved, lifetime, admin) MUST be granted via backend.
       allow create: if request.resource.data.hwid == hwid
+                    && request.resource.data.status == 'trial'
+                    && request.resource.data.planId == 'trial'
+                    && !('isAdminGranted' in request.resource.data)
+                    && !('adminGrantedBy' in request.resource.data)
                     && !('password' in request.resource.data)
                     && !('cardNumber' in request.resource.data)
                     && !('card' in request.resource.data)
                     && !('cvv' in request.resource.data)
                     && !('secret' in request.resource.data);
 
-      // On update: Ensure client cannot alter another device's hwid or inject sensitive data
+      // On update: Normal clients cannot escalate privileges or self-grant licenses.
+      // status, planId, isAdminGranted, and licenseKey cannot be altered by client writes.
+      // Trial start and expiry timestamps are strictly immutable on client updates.
       allow update: if request.resource.data.hwid == hwid
+                    && (!('status' in request.resource.data) || request.resource.data.status == resource.data.status)
+                    && (!('planId' in request.resource.data) || request.resource.data.planId == resource.data.planId)
+                    && (!('isAdminGranted' in request.resource.data) || request.resource.data.isAdminGranted == resource.data.isAdminGranted)
+                    && (!('trialExpiresAt' in request.resource.data) || request.resource.data.trialExpiresAt == resource.data.trialExpiresAt)
+                    && (!('trialStartedAt' in request.resource.data) || request.resource.data.trialStartedAt == resource.data.trialStartedAt)
                     && !('password' in request.resource.data)
                     && !('cardNumber' in request.resource.data)
                     && !('card' in request.resource.data)
                     && !('cvv' in request.resource.data)
                     && !('secret' in request.resource.data);
 
-      // Client-side deletions are forbidden (admin/service account only)
+      // Client-side deletions are forbidden (backend admin / service account only)
       allow delete: if request.auth != null;
     }
 
-    // System aggregate stats and OTA updates
+    // System aggregate stats, releases, and OTA updates (read-only for clients)
     match /system/{docId} {
       allow read: if true;
       allow write: if request.auth != null;
     }
 
-    // Single-use payment claims
+    // Single-use payment claims (read-only for clients, managed by backend transactions)
     match /claimed_payments/{paymentId} {
       allow read: if true;
-      allow create, update: if request.resource.data.paymentId == paymentId;
-      allow delete: if request.auth != null;
+      allow write: if request.auth != null;
     }
   }
 }

@@ -62,6 +62,57 @@ const ClaimPaymentSchema = z.object({
   planId: z.enum(['monthly', 'quarterly', 'lifetime']).default('quarterly')
 });
 
+const AdminGrantSchema = z.object({
+  hwid: z.string().min(4).max(64),
+  adminToken: z.string().min(8).max(256).optional(),
+  adminIdentity: z.string().optional()
+});
+
+const AdminRevokeSchema = z.object({
+  hwid: z.string().min(4).max(64),
+  adminToken: z.string().min(8).max(256).optional(),
+  adminIdentity: z.string().optional()
+});
+
+// ── BACKEND ADMINISTRATOR AUTHORIZATION MIDDLEWARE / VALIDATOR ──────
+function validateAdminAuth(req) {
+  const configuredKey = process.env.ADMIN_SECRET_KEY;
+  if (!configuredKey || configuredKey.trim().length < 16) {
+    return { authorized: false, error: 'Admin authorization key is not configured on the backend server.' };
+  }
+
+  let providedToken = null;
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    providedToken = authHeader.slice(7).trim();
+  } else if (req.headers['x-admin-token']) {
+    providedToken = String(req.headers['x-admin-token']).trim();
+  } else if (req.body && req.body.adminToken) {
+    providedToken = String(req.body.adminToken).trim();
+  }
+
+  if (!providedToken) {
+    return { authorized: false, error: 'Unauthorized: Missing admin authorization credentials.' };
+  }
+
+  const expectedBuf = Buffer.from(configuredKey);
+  const providedBuf = Buffer.from(providedToken);
+  if (expectedBuf.length !== providedBuf.length || !crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+    return { authorized: false, error: 'Unauthorized: Invalid admin authorization credentials.' };
+  }
+
+  const adminIdentity = (req.body?.adminIdentity || req.headers['x-admin-identity'] || 'Configured Administrator').trim();
+  const configuredIdentities = process.env.ADMIN_IDENTIFIERS;
+  if (configuredIdentities && req.body?.adminIdentity) {
+    const allowedList = configuredIdentities.split(',').map(s => s.trim().toLowerCase());
+    if (!allowedList.includes(adminIdentity.toLowerCase())) {
+      return { authorized: false, error: 'Forbidden: Administrator identity is not permitted.' };
+    }
+  }
+
+  return { authorized: true, adminIdentity };
+}
+
 // Serve Admin Dashboard
 app.use('/admin', express.static(path.join(__dirname, 'admin-dashboard')));
 
@@ -84,44 +135,120 @@ app.get('/api/licenses/verify/:hwid', async (req, res) => {
     }
 
     const data = snap.data();
-    return res.json({ exists: true, ...data });
+    const serverNow = Date.now();
+    const trialDurationHours = data.trialDurationHours || 72;
+    let trialExpiresAt = data.trialExpiresAt;
+    if (!trialExpiresAt && data.registeredAt) {
+      const regTime = data.registeredAt.toMillis ? data.registeredAt.toMillis() : new Date(data.registeredAt).getTime();
+      trialExpiresAt = new Date(regTime + trialDurationHours * 3600 * 1000).toISOString();
+    }
+    const isTrialExpired = data.status === 'trial' && trialExpiresAt && serverNow > new Date(trialExpiresAt).getTime();
+    const effectiveStatus = isTrialExpired ? 'expired' : data.status;
+
+    return res.json({
+      exists: true,
+      ...data,
+      status: effectiveStatus,
+      serverTime: serverNow,
+      trialExpiresAt,
+      trialRemainingMs: trialExpiresAt ? Math.max(0, new Date(trialExpiresAt).getTime() - serverNow) : 0,
+      isTrialExpired
+    });
   } catch (err) {
     console.error('[Verify Error]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2. Register Device on First Start
+// 2. Register Device on First Start / Verify Trial
 app.post('/api/licenses/register', async (req, res) => {
   try {
     const { hwid, fullHwid, pcName, appVersion } = req.body;
     if (!hwid) return res.status(400).json({ error: 'Missing hwid' });
 
+    const serverNow = Date.now();
     const docRef = db.collection(collectionName).doc(hwid);
     const snap = await docRef.get();
 
     if (snap.exists) {
+      const data = snap.data();
+      const trialDurationHours = data.trialDurationHours || 72;
+      const trialDurationMs = trialDurationHours * 3600 * 1000;
+
+      let trialExpiresAtMs = data.trialExpiresAt ? new Date(data.trialExpiresAt).getTime() : null;
+      if (!trialExpiresAtMs && data.registeredAt) {
+        const regTime = data.registeredAt.toMillis ? data.registeredAt.toMillis() : new Date(data.registeredAt).getTime();
+        trialExpiresAtMs = regTime + trialDurationMs;
+      }
+
+      const isTrialExpired = data.status === 'trial' && trialExpiresAtMs && serverNow > trialExpiresAtMs;
+      const currentStatus = isTrialExpired ? 'expired' : data.status;
+
       // Update heartbeat
       await docRef.update({
         lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
-        pcName: pcName || snap.data().pcName,
-        appVersion: appVersion || snap.data().appVersion
+        pcName: pcName || data.pcName,
+        appVersion: appVersion || data.appVersion,
+        ...(isTrialExpired && data.status === 'trial' ? { status: 'expired' } : {})
       });
-      return res.json({ registered: true, status: snap.data().status });
+
+      return res.json({
+        registered: true,
+        isNew: false,
+        serverTime: serverNow,
+        status: currentStatus,
+        planId: data.planId || (data.status === 'approved' ? 'lifetime' : 'trial'),
+        planName: data.planName || (data.status === 'approved' ? 'Pro License' : '3-Day Free Trial'),
+        trialStartedAt: data.trialStartedAt || (data.registeredAt?.toDate ? data.registeredAt.toDate().toISOString() : new Date(data.registeredAt || serverNow).toISOString()),
+        trialExpiresAt: trialExpiresAtMs ? new Date(trialExpiresAtMs).toISOString() : new Date(serverNow).toISOString(),
+        trialExpiresAtMs: trialExpiresAtMs || serverNow,
+        trialDurationHours,
+        trialRemainingMs: Math.max(0, (trialExpiresAtMs || serverNow) - serverNow),
+        expiresAt: data.expiresAt || null,
+        licenseKey: data.licenseKey || null,
+        isAdminGranted: Boolean(data.isAdminGranted)
+      });
     }
+
+    // Brand new device: Start exactly ONE 72-hour trial from authoritative server time
+    const trialDurationHours = 72;
+    const trialExpiresAtMs = serverNow + trialDurationHours * 3600 * 1000;
+    const trialStartedIso = new Date(serverNow).toISOString();
+    const trialExpiresIso = new Date(trialExpiresAtMs).toISOString();
 
     const newDoc = {
       hwid,
       fullHwid: fullHwid || '',
       pcName: pcName || 'Unknown Device',
       status: 'trial',
+      planId: 'trial',
+      planName: '3-Day Free Trial',
       registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+      trialStartedAt: trialStartedIso,
+      trialExpiresAt: trialExpiresIso,
+      trialExpiresAtMs: trialExpiresAtMs,
+      trialDurationHours: trialDurationHours,
       lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
-      appVersion: appVersion || '1.0.3'
+      appVersion: appVersion || '1.0.15',
+      isAdminGranted: false
     };
 
     await docRef.set(newDoc);
-    return res.json({ registered: true, status: 'trial' });
+    return res.json({
+      registered: true,
+      isNew: true,
+      serverTime: serverNow,
+      status: 'trial',
+      planId: 'trial',
+      planName: '3-Day Free Trial',
+      trialStartedAt: trialStartedIso,
+      trialExpiresAt: trialExpiresIso,
+      trialExpiresAtMs: trialExpiresAtMs,
+      trialDurationHours: trialDurationHours,
+      trialRemainingMs: trialExpiresAtMs - serverNow,
+      expiresAt: null,
+      isAdminGranted: false
+    });
   } catch (err) {
     console.error('[Register Error]', err);
     res.status(500).json({ error: err.message });
@@ -738,9 +865,113 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
   }
 });
 
-// 7. Admin Analytics & Device Counts Endpoint
+// 7. Backend-Authorized Admin Lifetime Grant & Revoke Endpoints
+app.post('/api/admin/grant-lifetime', async (req, res) => {
+  try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
+    const parseResult = AdminGrantSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Invalid admin grant parameters', details: parseResult.error.format() });
+    }
+
+    const { hwid } = parseResult.data;
+    const cleanHwid = String(hwid || '').trim();
+    if (!cleanHwid || cleanHwid.length < 4) {
+      return res.status(400).json({ success: false, error: 'Invalid device Hardware ID' });
+    }
+
+    const licenseKey = 'ADMIN-LIFE-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+    const nowIso = new Date().toISOString();
+
+    const docRef = db.collection(collectionName).doc(cleanHwid);
+    const updatePayload = {
+      status: 'approved',
+      planId: 'lifetime',
+      planName: 'Lifetime Pro (Admin)',
+      licenseKey: licenseKey,
+      expiresAt: null,
+      isAdminGranted: true,
+      adminGrantedBy: auth.adminIdentity,
+      adminGrantedAt: admin.firestore.FieldValue.serverTimestamp(),
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      hwid: cleanHwid
+    };
+
+    await docRef.set(updatePayload, { merge: true });
+
+    console.log(`[Admin Lifetime Approved] HWID ${cleanHwid} granted Lifetime Pro by ${auth.adminIdentity} (Key: ${licenseKey})`);
+
+    return res.json({
+      success: true,
+      status: 'approved',
+      licenseInfo: {
+        isAuthorized: true,
+        status: 'approved',
+        hwid: cleanHwid,
+        planId: 'lifetime',
+        planName: 'Lifetime Pro (Admin)',
+        licenseKey: licenseKey,
+        expiresAt: null,
+        isAdminGranted: true,
+        approvedAt: nowIso
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Grant Error]', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/admin/revoke-lifetime', async (req, res) => {
+  try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
+    const parseResult = AdminRevokeSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ success: false, error: 'Invalid admin revoke parameters', details: parseResult.error.format() });
+    }
+
+    const { hwid } = parseResult.data;
+    const cleanHwid = String(hwid || '').trim();
+
+    const docRef = db.collection(collectionName).doc(cleanHwid);
+    await docRef.set({
+      status: 'revoked',
+      isAdminGranted: false,
+      revokedBy: auth.adminIdentity,
+      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    console.log(`[Admin Lifetime Revoked] HWID ${cleanHwid} revoked by ${auth.adminIdentity}`);
+
+    return res.json({
+      success: true,
+      status: 'revoked',
+      hwid: cleanHwid
+    });
+  } catch (err) {
+    console.error('[Admin Revoke Error]', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Admin Analytics & Device Counts Endpoint
 app.get('/api/admin/stats', async (req, res) => {
   try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
     const snap = await db.collection(collectionName).get();
     const now = Date.now();
     const fifteenMinMs = 15 * 60 * 1000;
@@ -782,9 +1013,14 @@ app.get('/api/admin/stats', async (req, res) => {
   }
 });
 
-// 8. Device Listing Endpoint for Admin Dashboard
+// 9. Device Listing Endpoint for Admin Dashboard
 app.get('/api/devices', async (req, res) => {
   try {
+    const auth = validateAdminAuth(req);
+    if (!auth.authorized) {
+      return res.status(403).json({ success: false, error: auth.error });
+    }
+
     const snap = await db.collection(collectionName).get();
     const list = [];
     snap.forEach(doc => {
